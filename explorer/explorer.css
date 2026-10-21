@@ -416,3 +416,13 @@ dialog ol { padding-left: 20px; }
 /* Soltar en el árbol */
 .tn { position: relative; }
 .tn.drop-into { outline: 2px solid var(--drop); outline-offset: -2px; background: var(--acc-bg); }
+
+/* Circulito de estado, con más contraste */
+.ld { width: 9px; height: 9px; flex: 0 0 9px; }
+.ld.on { background: #22c55e; box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 30%, transparent); }
+.ld.off { border: 2px solid var(--fg); opacity: .75; background: transparent; }
+.ld.cl { border: 2px dashed var(--fg); opacity: .6; }
+.c .th .flags span.ld.on { background: #22c55e; box-shadow: 0 0 0 2px #0008; }
+.c .th .flags span.ld.off, .c .th .flags span.ld.cl { border-color: #fff; opacity: 1; }
+.kv-r { display: grid; grid-template-columns: auto auto; gap: 4px 18px; font-size: .95rem; margin-bottom: 10px; }
+.kv-r > div:nth-child(odd) { color: var(--fg2); }

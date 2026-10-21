@@ -107,6 +107,8 @@ async function saveLearned(upd) {
   let changed = false
   for (const id of ids) {
     const old = learned[id]
+    // Conservar el color y el título de Sidebery que se guardaron al importar
+    if (old && old.length > 2 && upd[id].length <= 2) upd[id] = [upd[id][0], upd[id][1], old[2], old[3]]
     if (!old || old[0] !== upd[id][0]) {
       browser.sessions.setTabValue(+id, 'sbp', upd[id]).catch(() => {})
       changed = true

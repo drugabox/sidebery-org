@@ -329,3 +329,78 @@ test('deshacer: vuelve exactamente al estado anterior', () => {
     assert.equal(show(list), show(s))
   }
 })
+
+// Copia de minimizeSnapshot de Sidebery (src/services/snapshots.ts) para generar archivos reales
+function sbMinimize(snapshots, snapshot) {
+  const U = -1
+  for (let i = snapshots.length; i--;) {
+    const n = snapshots[i]
+    if (!n || !n.containers) break
+    if (n.containers === U) continue
+    if (JSON.stringify(n.containers) === JSON.stringify(snapshot.containers)) snapshot.containers = U
+    break
+  }
+  for (let i = snapshots.length; i--;) {
+    const n = snapshots[i]
+    if (!n || !n.sidebar) break
+    if (n.sidebar === U) continue
+    if (JSON.stringify(n.sidebar) === JSON.stringify(snapshot.sidebar)) snapshot.sidebar = U
+    break
+  }
+  per_win: for (let wi = 0; wi < snapshot.tabs.length; wi++) {
+    const win = snapshot.tabs[wi]
+    if (!win) break
+    per_panel: for (let gi = 0; gi < win.length; gi++) {
+      const tabs = win[gi]
+      if (!tabs) break per_win
+      per_tab: for (let ti = 0; ti < tabs.length; ti++) {
+        const tab = tabs[ti]
+        if (!tab) break per_win
+        if (tab === U) continue
+        for (let i = snapshots.length; i--;) {
+          const n = snapshots[i]
+          if (!n) break per_win
+          const winN = n.tabs[wi]
+          if (!winN) break per_win
+          const panelN = winN[gi]
+          if (!panelN) break per_panel
+          const tabN = panelN[ti]
+          if (!tabN) break per_tab
+          if (tabN === U) continue
+          if (tab.url === tabN.url && tab.title === tabN.title && tab.panelId === tabN.panelId && tab.lvl === tabN.lvl && tab.customColor === tabN.customColor) tabs[ti] = U
+          break
+        }
+      }
+    }
+  }
+}
+
+test('instantáneas comprimidas de Sidebery: se reconstruyen todas las pestañas', () => {
+  const sidebar = { nav: ['a', 'b'], panels: { a: { id: 'a', type: 2, name: 'A' }, b: { id: 'b', type: 2, name: 'B' } } }
+  const mk = (n, extra) => ({
+    id: 's' + n,
+    time: 1000 * n,
+    containers: {},
+    sidebar: JSON.parse(JSON.stringify(sidebar)),
+    tabs: [
+      [
+        Array.from({ length: 300 + extra }, (_, i) => ({ url: `https://a.com/${i}`, title: 'A' + i, panelId: 'a', lvl: i % 3 ? 1 : 0, customColor: i === 5 ? 'red' : undefined })),
+        Array.from({ length: 200 }, (_, i) => ({ url: `https://b.com/${i}`, title: 'B' + i, panelId: 'b' })),
+      ],
+      [Array.from({ length: 50 + extra }, (_, i) => ({ url: `https://c.com/${i}`, title: 'C' + i, panelId: 'a' }))],
+    ],
+  })
+  const stored = []
+  for (let n = 1; n <= 4; n++) {
+    const snap = mk(n, n * 10)
+    sbMinimize(stored, snap)
+    stored.push(snap)
+  }
+  const unchanged = stored[3].tabs.flat(2).filter(t => t === -1).length
+  assert.ok(unchanged > 500, 'la última está comprimida')
+  const r = M.parseSideberyExport({ sidebar, snapshots: stored })
+  assert.equal(r.lost, 0)
+  assert.equal(r.tabCount, 340 + 200 + 90)
+  assert.equal(r.windows[0].find(t => t.url === 'https://a.com/5').color, 'red')
+  assert.equal(r.snapshots.length, 4)
+})

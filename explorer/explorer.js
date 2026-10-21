@@ -355,6 +355,10 @@ function makeTabItem(i) {
   const isGroup = M.sideberyPage(t.url) === 'group'
   const ytId = M.youtubeId(url)
   const ctr = S.containers.get(t.cookieStoreId)
+  // Color y título de Sidebery: de la instantánea, o los guardados en la pestaña al importar
+  const l = S.learned[t.id] || []
+  const sbColor = (i.sb && i.sb.color) || l[2] || ''
+  const sbTitle = (i.sb && i.sb.customTitle) || l[3] || ''
   const tags = f ? [...new Set([...(f.tags || []), ...M.noteTags(f.note)])] : []
   return {
     key: 't:' + t.id,
@@ -363,17 +367,17 @@ function makeTabItem(i) {
     win: i.win,
     url,
     nurl: key,
-    title: (f && f.alias) || (i.sb && i.sb.customTitle) || (isGroup ? M.groupName(t.url) || t.title : ytId ? ytTitle(t.title, ytId) : t.title) || url,
+    title: (f && f.alias) || sbTitle || (isGroup ? M.groupName(t.url) || t.title : ytId ? ytTitle(t.title, ytId) : t.title) || url,
     yt: ytId,
     channel: ytId ? (S.yt[ytId] || [])[1] || '' : '',
     realTitle: t.title,
-    customTitle: i.sb && i.sb.customTitle,
+    customTitle: sbTitle,
     fav: t.favIconUrl,
     domain: isGroup ? 'grupo de Sidebery' : M.domainOf(url),
     panel: t.pinned ? i.panel || 'Fijadas' : i.panel,
     sure: i.sure,
-    sbColor: i.sb && i.sb.color ? M.colorCss(i.sb.color) : '',
-    colorName: i.sb && i.sb.color,
+    sbColor: sbColor ? M.colorCss(sbColor) : '',
+    colorName: sbColor,
     color: f && f.color,
     tags,
     cols: f ? (f.cols || []).map(id => S.cols.get(id)?.name).filter(Boolean) : [],
@@ -2826,40 +2830,68 @@ function pickFile(fn) {
 }
 
 async function importSidebery(file) {
+  let data
   try {
-    const text = await file.text()
-    const data = M.parseSideberyExport(text)
-    data.importedAt = Date.now()
-    if (!data.tabCount) toast('El archivo trae los nombres y colores de los paneles, pero no qué pestaña va en cada uno (Sidebery no tenía ninguna instantánea). Para los colores de las pestañas: en Sidebery, Settings → Snapshots → «Create snapshot», y vuelve a exportar.', 15000)
-    await browser.storage.local.set({ sbImport: data })
-    S.sbImport = data
-    await refresh()
-    const n = await adoptImport()
-    toast(`Sidebery: ${data.panels.length} paneles; ${n} pestañas ubicadas. Ya no hace falta volver a importar: a partir de ahora se sigue en vivo.`, 9000)
-    if ($('#dlg').open) openSettings('sidebery')
+    data = M.parseSideberyExport(await file.text())
   } catch (e) {
-    toast('No es un archivo de Sidebery válido: ' + e.message, 7000)
+    return toast('No es un archivo de Sidebery válido: ' + e.message, 7000)
   }
+  data.importedAt = Date.now()
+  await browser.storage.local.set({ sbImport: data })
+  S.sbImport = data
+  await refresh()
+  const r = await adoptImport()
+  await refresh()
+  showImportReport(data, r)
 }
 
-// Lo importado pasa a ser de cada pestaña (viaja con ella y sobrevive a reinicios y a
-// cambios de dirección); el árbol se fija en openerTabId, que Pestañario guarda y repone.
+// Lo importado manda: se guarda en cada pestaña (panel, color y título de Sidebery), viaja con
+// ella y sobrevive a reinicios y a cambios de dirección; el árbol se fija en openerTabId.
 async function adoptImport() {
-  const imp = S.sbImport
-  if (!imp || !imp.tabCount) return 0
-  let n = 0
+  const r = { open: 0, matched: 0, colored: 0, titled: 0, missing: [] }
+  const now = Date.now()
   for (const i of S.info.values()) {
-    if (!i.sb || !i.sb.panel) continue
-    const old = S.learned[i.id]
-    if (!old || old[1] < imp.time) {
-      S.learned[i.id] = [i.sb.panel, imp.time]
-      browser.sessions.setTabValue(i.id, 'sbp', S.learned[i.id]).catch(() => {})
+    if (i.tab.pinned || i.id === S.selfTabId) continue
+    r.open++
+    if (!i.sb || !i.sb.panel) {
+      if (r.missing.length < 8) r.missing.push(i.tab.title || i.tab.url)
+      continue
     }
-    n++
+    r.matched++
+    if (i.sb.color) r.colored++
+    if (i.sb.customTitle) r.titled++
+    S.learned[i.id] = [i.sb.panel, now, i.sb.color || '', i.sb.customTitle || '']
+    browser.sessions.setTabValue(i.id, 'sbp', S.learned[i.id]).catch(() => {})
     if (i.tab.openerTabId === undefined && i.parent !== -1) browser.tabs.update(i.id, { openerTabId: i.parent }).catch(() => {})
   }
   await browser.storage.local.set({ learned: S.learned })
-  return n
+  return r
+}
+
+function showImportReport(data, r) {
+  const dlg = $('#dlg')
+  const pct = r.open ? Math.round((100 * r.matched) / r.open) : 0
+  dlg.innerHTML = `<h3>Importado de Sidebery</h3>
+<div class="kv-r">
+  <div>Instantánea</div><div>${new Date(data.time).toLocaleString()} (${ago(data.time)})</div>
+  <div>Paneles</div><div>${data.panels.length}</div>
+  <div>Pestañas en la instantánea</div><div>${data.tabCount}</div>
+  <div>Tus pestañas abiertas</div><div>${r.open}</div>
+  <div>Ubicadas en su panel</div><div><b>${r.matched}</b> (${pct} %)</div>
+  <div>Con color de Sidebery</div><div>${r.colored}</div>
+  <div>Con título propio de Sidebery</div><div>${r.titled}</div>
+</div>
+${
+  r.open - r.matched > 0
+    ? `<p class="small">${r.open - r.matched} pestañas no estaban en la instantánea (abiertas o cambiadas después de crearla). Se ubican por su posición o al abrir su panel en Sidebery. Si son muchas, crea una instantánea nueva en Sidebery justo antes de exportar.</p>${r.missing.length ? `<p class="small muted">Por ejemplo: ${r.missing.map(esc).join(' · ')}</p>` : ''}`
+    : '<p class="small">Todas tus pestañas están ubicadas.</p>'
+}
+${data.lost ? `<p class="small" style="color:var(--danger)">${data.lost} pestañas de la instantánea no se pudieron reconstruir (Sidebery guarda las instantáneas como cambios respecto a las anteriores).</p>` : ''}
+${(data.snapshots || []).length ? `<details class="small"><summary>Instantáneas en el archivo (${data.snapshots.length})</summary><div class="kv-r" style="margin-top:6px">${data.snapshots.slice(-12).reverse().map(x => `<div>${new Date(x.time).toLocaleString()}</div><div>${x.ok} pestañas, ${x.wins} ventana${x.wins === 1 ? '' : 's'}${x.lost ? `, <span style="color:var(--danger)">${x.lost} sin reconstruir</span>` : ''}</div>`).join('')}</div><p class="muted">Se usa la más reciente.</p></details>` : ''}
+<p class="small muted">No hace falta volver a importar: a partir de ahora se sigue en vivo. Solo si cambias colores en Sidebery y quieres verlos aquí.</p>
+<div class="foot"><button class="primary" id="btnOkImp">Aceptar</button></div>`
+  dlg.querySelector('#btnOkImp').onclick = () => dlg.close()
+  if (!dlg.open) dlg.showModal()
 }
 
 function download(name, text, type) {
