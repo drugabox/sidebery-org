@@ -1,0 +1,23 @@
+{
+  "name": "pestanario",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Explorador y base de datos de pestañas para Firefox, complemento de Sidebery",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint": "npx --yes web-ext@8 lint",
+    "build": "npx --yes web-ext@8 build -a dist --overwrite-dest",
+    "start": "npx --yes web-ext@8 run"
+  },
+  "webExt": {
+    "sourceDir": ".",
+    "ignoreFiles": [
+      "test",
+      "package.json",
+      "README.md",
+      "dist",
+      "web-ext-artifacts",
+      ".github"
+    ]
+  }
+}

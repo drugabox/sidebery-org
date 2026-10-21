@@ -1,0 +1,87 @@
+# Cada cambio en main: prueba, firma con Mozilla (no listada) y publica en Releases.
+# Firefox lee updates.json de la última publicación y se actualiza solo.
+name: Firmar y publicar
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publicar
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Pruebas
+        run: npm test
+
+      # Versión automática: mayor.menor del manifiesto + número de ejecución (1.1.7, 1.1.8...).
+      # Mozilla exige que cada versión firmada sea nueva y mayor que la anterior.
+      - name: Calcular versión
+        id: ver
+        run: |
+          VERSION=$(node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const [a, b] = m.version.split(".");
+            m.version = `${a}.${b}.${process.env.GITHUB_RUN_NUMBER}`;
+            fs.writeFileSync("manifest.json", JSON.stringify(m, null, 2) + "\n");
+            console.log(m.version);
+          ')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Versión: $VERSION"
+
+      - name: Comprobar con el validador de Mozilla
+        run: npx --yes web-ext@8 lint --self-hosted
+
+      - name: Firmar con Mozilla
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: npx --yes web-ext@8 sign --channel=unlisted --artifacts-dir=web-ext-artifacts --approval-timeout=1200000
+
+      - name: Preparar archivos
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p out
+          cp web-ext-artifacts/*.xpi "out/pestanario-$VERSION.xpi"
+          cp web-ext-artifacts/*.xpi out/pestanario.xpi
+          ID=$(node -p 'require("./manifest.json").browser_specific_settings.gecko.id')
+          cat > out/updates.json <<JSON
+          {
+            "addons": {
+              "$ID": {
+                "updates": [
+                  {
+                    "version": "$VERSION",
+                    "update_link": "https://github.com/$REPO/releases/download/v$VERSION/pestanario-$VERSION.xpi"
+                  }
+                ]
+              }
+            }
+          }
+          JSON
+          cat out/updates.json
+
+      - name: Publicar en Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          NOTES=$(git log -1 --pretty=%B)
+          gh release create "v$VERSION" out/* --title "Pestañario $VERSION" --notes "$NOTES" --latest

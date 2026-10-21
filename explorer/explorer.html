@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Pestañario</title>
+  <link rel="icon" href="../icons/icon.svg">
+  <link rel="stylesheet" href="explorer.css">
+</head>
+<body>
+  <header id="top">
+    <button id="btnSide" class="ico" title="Barra lateral (Ctrl+B)">☰</button>
+    <button id="btnBack" class="ico" title="Atrás (Alt+←)">←</button>
+    <button id="btnFwd" class="ico" title="Adelante (Alt+→)">→</button>
+    <button id="btnUp" class="ico" title="Subir (Retroceso)">↑</button>
+    <nav id="crumbs"></nav>
+    <input id="search" type="search" placeholder="Buscar…   #etiqueta  panel:  site:  color:  en:  es:cerrada" autocomplete="off" spellcheck="false">
+    <div class="seg" id="views">
+      <button data-view="details" title="Detalles (Ctrl+1)">☰ Detalles</button>
+      <button data-view="icons" title="Miniaturas (Ctrl+2)">▦ Miniaturas</button>
+      <button data-view="graph" title="Grafo de vínculos (Ctrl+3)">✳ Grafo</button>
+    </div>
+    <select id="sort" title="Ordenar">
+      <option value="natural">Orden de Sidebery</option>
+      <option value="title">Nombre</option>
+      <option value="domain">Web</option>
+      <option value="recent">Último uso</option>
+    </select>
+    <input id="zoom" type="range" min="1" max="4" step="1" title="Tamaño de las miniaturas">
+    <button id="btnInspector" class="ico" title="Panel de detalles (I)">ⓘ</button>
+    <button id="btnWindow" class="ico" title="Abrir en una ventana aparte">⧉</button>
+    <button id="btnSettings" class="ico" title="Ajustes y Sidebery">⚙</button>
+  </header>
+
+  <div id="body">
+    <aside id="side"><div id="tree" tabindex="0"></div></aside>
+    <div class="split" data-split="side"></div>
+    <main id="main">
+      <div id="colhead"></div>
+      <div id="list" tabindex="0"><div id="sizer"></div><div id="win"></div></div>
+      <canvas id="graph" hidden></canvas>
+      <div id="empty" hidden></div>
+    </main>
+    <div class="split" data-split="inspector"></div>
+    <section id="inspector"></section>
+  </div>
+
+  <footer id="status"></footer>
+  <div id="menu" hidden></div>
+  <dialog id="dlg"></dialog>
+  <input type="file" id="file" hidden accept=".json,application/json">
+
+  <script src="../lib/model.js"></script>
+  <script src="../lib/db.js"></script>
+  <script src="graph.js"></script>
+  <script src="explorer.js"></script>
+</body>
+</html>
