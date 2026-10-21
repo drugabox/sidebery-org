@@ -13,7 +13,7 @@ Sidebery no ofrece ninguna vía para que otra extensión lea o cambie sus datos 
 | | Sidebery → Pestañario | Pestañario → Sidebery |
 |---|---|---|
 | **Orden de las pestañas** | ✅ en vivo | ✅ en vivo |
-| **Panel de cada pestaña** | ✅ en vivo, con el botón «Reconocer paneles» y al cambiar de panel | ✅ en vivo: al mover aquí, Sidebery la cambia de panel |
+| **Panel de cada pestaña** | ⚠️ se aprende al abrir cada panel en Sidebery; después se mantiene solo por posición | ✅ en vivo: al mover aquí, Sidebery la cambia de panel |
 | **Árbol (padres e hijas)** | ✅ en vivo (Sidebery lo refleja en Firefox) | ✅ al soltar entre hijas o sobre una carpeta, queda dentro; Pestañario calcula el árbol igual que Sidebery |
 | **Nombre, color, icono y orden de los paneles** | 🔄 al importar el archivo de Sidebery | ❌ (se cambian en Sidebery) |
 | **Colores y títulos propios de las pestañas** | 🔄 al importar el archivo de Sidebery | ❌ Pestañario tiene sus propios colores y nombres |
@@ -31,9 +31,8 @@ Si Sidebery añadiera algún día una API para otras extensiones, se podría sin
 En Pestañario: ⚙ → *Conexión con Sidebery*, que muestra si está funcionando. Sidebery está en inglés, así que sus opciones aparecen con su nombre original:
 
 1. **Imprescindible.** Sidebery → *Settings → General* → activa *«Add preface to the browser window's title if Sidebery sidebar is active»* y en *«Preface value»* escribe `⟦%PN⟧ ` (mejor con el espacio final). El título de la ventana empezará por el nombre del panel activo.
-2. **Pulsa «Reconocer paneles»** (aviso en la barra lateral, o ⚙). Durante unos segundos Pestañario activa algunas pestañas y lee qué panel muestra Sidebery. Como cada panel es un tramo seguido, solo hace falta buscar dónde empieza y acaba cada uno: con 400 pestañas en 6 paneles, unas 30 miradas. Usa pestañas ya cargadas siempre que puede, vuelve a dormir las que despierte y al acabar te devuelve a donde estabas. Después sigue aprendiendo solo cada vez que cambias de panel.
-3. **Opcional, más rápido:** Sidebery → *Settings → Tabs* → *«Hide native tabs of inactive panels»*, y en Pestañario marca la casilla equivalente. Así reconoce un panel entero con una sola mirada.
-4. **Opcional, colores y títulos que pusiste a las pestañas en Sidebery:** Sidebery → *Settings → Snapshots → «Create snapshot»* y después *Settings → Help → «Export addon data»*. Suelta el archivo sobre Pestañario. Sin una instantánea previa, el archivo solo trae los paneles (nombres, colores y orden).
+2. **Recomendado:** Sidebery → *Settings → Tabs* → *«Hide native tabs of inactive panels»*, y en Pestañario marca la casilla equivalente (⚙). Así, cada vez que abres un panel en Sidebery, Pestañario aprende el panel entero al instante, sin hacer nada más. Sin esta opción solo aprende la pestaña activa.
+3. **Opcional, colores y títulos que pusiste a las pestañas en Sidebery:** Sidebery → *Settings → Snapshots → «Create snapshot»* y después *Settings → Help → «Export addon data»*. Suelta el archivo sobre Pestañario. Sin una instantánea previa, el archivo solo trae los paneles (nombres, colores y orden).
 
 Las pestañas que aún no se pueden ubicar aparecen en «Sin identificar»; las deducidas por posición llevan un «?».
 

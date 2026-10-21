@@ -732,7 +732,7 @@ function renderTree() {
     h.push(head)
     if (!open) continue
     const unknown = allTabs.filter(it => it.win === w.id && !it.pinned && !it.panel).length
-    if (unknown) h.push(`<div class="hint">${unknown} pestañas aún sin panel. <b><a href="#" data-act="scan" data-win="${w.id}">Reconocer paneles</a></b>: Pestañario pasa unos segundos por algunas pestañas para ver dónde empieza y acaba cada panel.</div>`)
+    if (unknown) h.push(`<div class="hint">${unknown} pestañas aún sin panel: se ubican al abrir su panel en Sidebery. ${S.settings.hideInact ? '' : 'Con <b>«Hide native tabs of inactive panels»</b> activado en Sidebery se aprende el panel entero de golpe. <a href="#" data-act="setup">Cómo</a>'}</div>`)
     const pinned = allTabs.filter(it => it.win === w.id && it.pinned)
     if (pinned.length) h.push(tn({ loc: { t: 'pinned', w: w.id }, label: 'Fijadas', icon: '📌', count: pinned.length, lvl }))
     const names = S.panelOrder.slice()
@@ -1507,17 +1507,6 @@ async function moveTabs(ids, target) {
   return true
 }
 
-async function scanPanels(win) {
-  win = win || (S.wins.find(w => w.focused) || S.wins[0])?.id
-  if (!win) return
-  toast('Reconociendo paneles… (unos segundos)', 60000)
-  const me = await browser.tabs.getCurrent()
-  const r = await browser.runtime.sendMessage({ type: 'scan', windowId: win, returnTo: me && me.windowId === win ? me.id : undefined })
-  if (!r || !r.ok) return toast((r && r.error) || 'No se pudo reconocer', 9000)
-  toast(`Listo: ${r.panels.length} paneles (${r.panels.join(', ')}) mirando ${r.probes} pestañas`, 8000)
-  scheduleRefresh()
-}
-
 async function closeTabs(items) {
   const ids = items.filter(i => i.kind === 'tab').map(i => i.id)
   if (!ids.length) return
@@ -2027,7 +2016,6 @@ $('#tree').addEventListener('click', e => {
     e.preventDefault()
     if (act.dataset.act === 'newcol') return newCollection(S.loc.t === 'col' ? S.loc.id : null)
     if (act.dataset.act === 'setup') return openSettings('sidebery')
-    if (act.dataset.act === 'scan') return scanPanels(+act.dataset.win)
   }
   const n = e.target.closest('[data-loc]')
   if (n) go(JSON.parse(n.dataset.loc))
@@ -2333,7 +2321,6 @@ function showLocMenu(x, y, loc) {
     m.push({ label: 'Ir a la pestaña', run: () => activate(tabItem(loc.id)) })
   }
   if (loc.t === 'panel') {
-    m.push({ label: 'Reconocer paneles de nuevo', run: () => scanPanels(loc.w) })
     const tabs = tabsOfPanel(loc.w, loc.p)
     m.push({ label: `Dormir sus ${tabs.length} pestañas`, run: () => discardTabs(tabs) })
   }
@@ -2518,7 +2505,6 @@ async function openSettings(section) {
   <li><b>Panel activo, en vivo.</b> En Sidebery: <i>Settings → General</i> → activa <i>«Add preface to the browser window's title if Sidebery sidebar is active»</i> y en <i>«Preface value»</i> escribe <code>⟦%PN⟧ </code>. Cada vez que cambias de panel, Pestañario apunta en qué panel está cada pestaña.<br>
   Estado: ${titleOk ? '<b style="color:#46a758">✓ detectado</b>' : `<b style="color:var(--danger)">✗ no detectado</b> <span class="muted">(título actual: ${esc(winTitle.slice(0, 60))})</span>`}</li>
   <li><b>Recomendado, más rápido:</b> en Sidebery, <i>Settings → Tabs</i> → <i>«Hide native tabs of inactive panels»</i>, y marca aquí: <label><input type="checkbox" id="setHide" ${s.hideInact ? 'checked' : ''}> Sidebery oculta las pestañas de los paneles inactivos</label>. Así aprende el panel entero de golpe, no solo la pestaña activa.</li>
-  <li><b>Separar los paneles ahora:</b> <button id="btnScan">Reconocer paneles</button> pasa unos segundos por algunas pestañas (prefiere las ya cargadas; las dormidas que despierte se vuelven a dormir) y te devuelve aquí.</li>
   <li><b>Opcional, colores y títulos que pusiste a las pestañas en Sidebery:</b> en Sidebery, <i>Settings → Snapshots → «Create snapshot»</i> y después <i>Settings → Help → «Export addon data»</i> (todo marcado). Después: <button id="btnImport">Importar archivo de Sidebery…</button> (o suéltalo sobre esta página). Repite cuando cambies colores o paneles.<br>
   ${imp ? `Importado: ${imp.panels.length} paneles, ${imp.tabCount} pestañas, ${new Date(imp.time).toLocaleString()}. <button id="btnForget" class="danger">Olvidar</button>` : '<span class="muted">Nada importado todavía.</span>'}</li>
 </ol>
@@ -2564,10 +2550,6 @@ Al arrastrar a una colección, <code>Ctrl</code> copia en vez de mover entre col
   dlg.querySelector('#setDensity').onchange = e => saveSettings({ density: e.target.value }).then(render)
   dlg.querySelector('#setOpen').onchange = e => saveSettings({ openMode: e.target.value })
   dlg.querySelector('#btnImport').onclick = () => pickFile(importSidebery)
-  dlg.querySelector('#btnScan').onclick = () => {
-    dlg.close()
-    scanPanels()
-  }
   dlg.querySelector('#btnForget') && (dlg.querySelector('#btnForget').onclick = async () => {
     await browser.storage.local.remove('sbImport')
     dlg.close()
