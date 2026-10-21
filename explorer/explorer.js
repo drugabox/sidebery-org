@@ -11,6 +11,9 @@ const DEFAULTS = {
   thumbs: false,
   openMode: 'tab',
   theme: 'auto',
+  accent: '',
+  fontSize: 13,
+  radius: 6,
   density: 'normal',
   view: 'details',
   sort: 'natural',
@@ -135,12 +138,25 @@ async function saveSettings(patch) {
   applyLook()
 }
 
+let lastLook = ''
 function applyLook() {
   const s = S.settings
+  if (s.theme === 'light') s.theme = 'claro'
+  if (s.theme === 'dark') s.theme = 'oscuro'
+  const look = JSON.stringify([s.theme, s.accent, s.fontSize, s.density, s.radius])
+  if (look !== lastLook) {
+    lastLook = look
+    Themes.apply(s).then(() => {
+      applyLayout()
+      if (typeof renderMain === 'function' && S.info.size) render()
+    })
+  }
+  applyLayout()
+}
+
+function applyLayout() {
+  const s = S.settings
   const root = document.documentElement
-  if (s.theme === 'auto') root.removeAttribute('data-theme')
-  else root.dataset.theme = s.theme
-  root.dataset.density = s.density
   document.body.classList.toggle('no-side', !s.side)
   document.body.classList.toggle('no-insp', !s.insp)
   root.style.setProperty('--side-w', s.sideW + 'px')
@@ -707,13 +723,17 @@ function renderCrumbs() {
 
 function tn({ loc, label, icon = '', count = '', lvl = 0, open = null, openKey = '', color = '', title = '' }) {
   const cur = loc && sameLoc(loc, S.loc) ? ' cur' : ''
-  const tw = open === null ? '<span class="tw"></span>' : `<span class="tw" data-tog="${esc(openKey)}">${open ? '▾' : '▸'}</span>`
+  const tw = open === null ? '<span class="tw"></span>' : `<span class="tw" data-tog="${esc(openKey)}">${chev(open)}</span>`
   return `<div class="tn${cur}" style="padding-left:${6 + lvl * 14}px" data-loc='${esc(locKey(loc))}' data-drop-loc='${esc(locKey(loc))}' title="${esc(title || label)}">${tw}<span class="ti">${icon || (color ? `<span class="dot" style="background:${esc(color)}"></span>` : '')}</span><span class="tl">${esc(label)}</span>${count !== '' ? `<span class="tc">${count}</span>` : ''}</div>`
+}
+
+function chev(open) {
+  return `<svg class="chev${open ? ' open' : ''}" viewBox="0 0 10 10"><path d="M3.5 1.5 7 5l-3.5 3.5"/></svg>`
 }
 
 function sec(key, label, extra = '') {
   const open = !S.treeOpen.has('x' + key)
-  return [`<div class="tsec"><span class="tw" data-tog="x${key}" style="cursor:pointer">${open ? '▾' : '▸'}</span><span class="grow" data-tog="x${key}" style="cursor:pointer">${label}</span>${extra}</div>`, open]
+  return [`<div class="tsec"><span class="tw" data-tog="x${key}" style="cursor:pointer">${chev(open)}</span><span class="grow" data-tog="x${key}" style="cursor:pointer">${label}</span>${extra}</div>`, open]
 }
 
 function renderTree() {
@@ -743,7 +763,7 @@ function renderTree() {
       const pk = `p${w.id}|${name}`
       const roots = tabs.filter(it => it.parent === -1 && it.kids.length)
       const open = S.treeOpen.has(pk) || (curPanel === pk && !S.treeOpen.has('-' + pk))
-      const icon = meta.icon ? `<img src="${esc(meta.icon)}" alt="">` : ''
+      const icon = meta.icon ? `<img src="${esc(meta.icon)}" alt="">` : folderSmall(M.colorCss(meta.color) || (name ? hashColor(name) : ''))
       h.push(tn({ loc: { t: 'panel', w: w.id, p: name }, label: panelLabel(name), icon, color: M.colorCss(meta.color) || hashColor(name), count: tabs.length, lvl, open: roots.length ? open : null, openKey: pk }))
       if (open) for (const r of roots) treeFolder(h, r, lvl + 1)
     }
@@ -762,7 +782,7 @@ function renderTree() {
       const ck = 'c' + c.id
       const open = S.treeOpen.has(ck)
       const n = fichaItemsIn(new Set([c.id])).length
-      h.push(tn({ loc: { t: 'col', id: c.id }, label: c.name, icon: '📁', color: c.color, count: n || '', lvl, open: kids.length ? open : null, openKey: ck }))
+      h.push(tn({ loc: { t: 'col', id: c.id }, label: c.name, icon: folderSmall(c.color), count: n || '', lvl, open: kids.length ? open : null, openKey: ck }))
       if (open) colRec(c.id, lvl + 1)
     }
   }
@@ -897,6 +917,13 @@ function renderDetails() {
   win.innerHTML = html
 }
 
+// Circulito: relleno = cargada, vacío = dormida, discontinuo = cerrada (ficha)
+function loadMark(it) {
+  if (it.kind === 'tab') return it.discarded ? '<span class="ld off" title="Dormida (sin cargar)"></span>' : '<span class="ld on" title="Cargada"></span>'
+  if (it.kind === 'ficha') return '<span class="ld cl" title="Cerrada (guardada)"></span>'
+  return '<span class="ld"></span>'
+}
+
 function folderSmall(color) {
   return `<span class="foldersm" style="${color ? `--fc:${esc(color)}` : ''}"><svg viewBox="0 0 64 52"><path d="M2 8a5 5 0 0 1 5-5h16l6 6h28a5 5 0 0 1 5 5v31a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5z"/><path class="front" d="M2 18a5 5 0 0 1 5-5h50a5 5 0 0 1 5 5v27a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5z"/></svg></span>`
 }
@@ -910,8 +937,8 @@ function rowHtml(r, i, tm) {
   if (it.discarded || it.kind === 'ficha') cls.push('dim')
   const stripe = it.sbColor || it.color || ''
   let tw = '<span class="tw"></span>'
-  if (tm && it.kind === 'tab' && it.kids.length) tw = `<span class="tw" data-exp="${it.id}">${S.expanded.has(it.id) ? '▾' : '▸'}</span>`
-  if (tm && it.kind === 'panel') tw = `<span class="tw" data-expp="${esc(it.key)}">${S.expandedP.has(it.key) ? '▾' : '▸'}</span>`
+  if (tm && it.kind === 'tab' && it.kids.length) tw = `<span class="tw" data-exp="${it.id}">${chev(S.expanded.has(it.id))}</span>`
+  if (tm && it.kind === 'panel') tw = `<span class="tw" data-expp="${esc(it.key)}">${chev(S.expandedP.has(it.key))}</span>`
   let icon
   if (it.kind === 'col' || it.kind === 'panel' || it.kind === 'pinnedf') icon = folderSmall(it.kind === 'pinnedf' ? '' : it.color)
   else if (it.kind === 'tab' && it.kids.length) icon = folderSmall(it.sbColor || it.color) + favHtml(it)
@@ -949,7 +976,7 @@ function rowHtml(r, i, tm) {
   else if (it.kind === 'tagdir') st = (S.tagCount.get(it.tag) || 0) + ' elem.'
   const title = esc(it.title) + (it.customTitle && it.customTitle !== it.realTitle ? '' : '')
   return `<div class="${cls.join(' ')}" data-key="${esc(it.key)}" data-i="${i}" draggable="true" style="--lvl:${r.lvl};${stripe ? `border-left-color:${esc(stripe)}` : ''}" title="${esc(it.url || it.title)}">
-<div class="c0">${tw}${icon}<span class="nm">${title}</span>${badges.join('')}</div>
+<div class="c0">${tw}${loadMark(it)}${icon}<span class="nm">${title}</span>${badges.join('')}</div>
 <div class="sub">${panel}</div><div>${tags}</div><div class="sub">${esc(it.domain || '')}</div><div class="sub">${it.kind === 'tab' || it.kind === 'ficha' ? ago(it.last) : ''}</div><div class="st">${st}</div></div>`
 }
 
@@ -1013,12 +1040,12 @@ function cardHtml(it, i) {
     else if (t) bg = `background-image:url('${t}')`
     th = yt ? '<span class="play">▶</span>' : t ? '' : `<span class="big" style="background:${hashColor(it.domain || it.title || '')}">${favOk(it.fav) ? `<img src="${esc(it.fav)}" alt="">` : esc((it.domain || it.title || '?')[0].toUpperCase())}</span>`
     const fl = []
+    if (it.kind === 'tab' || it.kind === 'ficha') fl.push(`<span class="ldw">${loadMark(it)}</span>`)
     if (it.pinned) fl.push('📌')
     if (it.audible) fl.push(it.muted ? '🔇' : '🔊')
-    if (it.discarded) fl.push('💤')
     if (it.cols && it.cols.length) fl.push('🔗')
     if (it.note) fl.push('✎')
-    if (fl.length) th += `<span class="flags">${fl.map(f => `<span>${f}</span>`).join('')}</span>`
+    if (fl.length) th += `<span class="flags">${fl.map(f => (f.startsWith('<span class="ldw') ? f : `<span>${f}</span>`)).join('')}</span>`
   }
   const sbc = it.sbColor || it.color || ''
   return `<div class="${cls.join(' ')}" data-key="${esc(it.key)}" data-i="${i}" draggable="true" title="${esc((it.title || '') + (it.url ? '\n' + it.url : ''))}">
@@ -2001,7 +2028,7 @@ $('#tree').addEventListener('click', e => {
   const tog = e.target.closest('[data-tog]')
   if (tog) {
     const k = tog.dataset.tog
-    const shown = (tog.closest('.tsec, .tn')?.querySelector('.tw')?.textContent || '').trim() === '▾'
+    const shown = !!tog.closest('.tsec, .tn')?.querySelector('.tw .chev.open')
     S.treeOpen.delete(k)
     S.treeOpen.delete('-' + k)
     if (k.startsWith('x')) {
@@ -2511,9 +2538,13 @@ async function openSettings(section) {
 <p class="small muted">Aprendidas en vivo: ${learnedN} pestañas. <button id="btnForgetLearned">Olvidar lo aprendido</button></p>
 <div class="row"><label>Patrón del título (avanzado)</label><input type="text" id="setRe" value="${esc(s.prefaceRe)}" style="min-width:160px"></div>
 
-<h4>Aspecto</h4>
-<div class="row"><label>Tema</label><select id="setTheme"><option value="auto">Automático</option><option value="light">Claro</option><option value="dark">Oscuro</option></select></div>
-<div class="row"><label>Densidad</label><select id="setDensity"><option value="compact">Compacta</option><option value="normal">Normal</option><option value="comfy">Amplia</option></select></div>
+<h4 id="sec-apariencia">Apariencia</h4>
+<div class="row"><label>Tema</label><select id="setTheme"><option value="auto">Automático (claro u oscuro según el sistema)</option>${Themes.LIST.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
+<div class="row"><label>Color de acento</label><input type="color" id="setAccent" value="${esc(s.accent || '#4f6bed')}"> <button id="btnAccentReset" ${s.accent ? '' : 'disabled'}>El del tema</button></div>
+<div class="row"><label>Tamaño del texto</label><input type="range" id="setFont" min="11" max="18" step="1" value="${s.fontSize}"> <span id="fontVal">${s.fontSize}px</span></div>
+<div class="row"><label>Densidad de las filas</label><select id="setDensity"><option value="compact">Compacta</option><option value="normal">Normal</option><option value="comfy">Amplia</option></select></div>
+<div class="row"><label>Redondeo de esquinas</label><input type="range" id="setRadius" min="0" max="14" step="1" value="${s.radius}"></div>
+<div class="row"><label>Al abrir, empezar en</label><select id="setView"><option value="details">Detalles</option><option value="icons">Miniaturas</option><option value="graph">Grafo</option></select></div>
 <div class="row"><label>Al pulsar el icono, abrir en</label><select id="setOpen"><option value="tab">Una pestaña</option><option value="window">Una ventana aparte</option></select> <span class="small muted">(clic central en el icono: siempre en ventana)</span></div>
 
 <h4>Miniaturas</h4>
@@ -2535,6 +2566,18 @@ Al arrastrar a una colección, <code>Ctrl</code> copia en vez de mover entre col
 <div class="foot"><button id="btnClose" class="primary">Cerrar</button></div>`
   dlg.querySelector('#setTheme').value = s.theme
   dlg.querySelector('#setDensity').value = s.density
+  dlg.querySelector('#setView').value = s.view
+  dlg.querySelector('#setView').onchange = e => setView(e.target.value)
+  dlg.querySelector('#setAccent').oninput = e => saveSettings({ accent: e.target.value })
+  dlg.querySelector('#btnAccentReset').onclick = e => {
+    e.target.disabled = true
+    saveSettings({ accent: '' })
+  }
+  dlg.querySelector('#setFont').oninput = e => {
+    dlg.querySelector('#fontVal').textContent = e.target.value + 'px'
+    saveSettings({ fontSize: +e.target.value })
+  }
+  dlg.querySelector('#setRadius').oninput = e => saveSettings({ radius: +e.target.value })
   dlg.querySelector('#setOpen').value = s.openMode
   dlg.querySelector('#btnClose').onclick = () => dlg.close()
   dlg.querySelector('#setHide').onchange = e => saveSettings({ hideInact: e.target.checked })
@@ -2598,12 +2641,33 @@ async function importSidebery(file) {
     if (!data.tabCount) toast('El archivo trae los nombres y colores de los paneles, pero no qué pestaña va en cada uno (Sidebery no tenía ninguna instantánea). Para los colores de las pestañas: en Sidebery, Settings → Snapshots → «Create snapshot», y vuelve a exportar.', 15000)
     await browser.storage.local.set({ sbImport: data })
     S.sbImport = data
-    toast(`Sidebery: ${data.panels.length} paneles y ${data.tabCount} pestañas importados`, 6000)
+    await refresh()
+    const n = await adoptImport()
+    toast(`Sidebery: ${data.panels.length} paneles; ${n} pestañas ubicadas. Ya no hace falta volver a importar: a partir de ahora se sigue en vivo.`, 9000)
     if ($('#dlg').open) openSettings('sidebery')
-    refresh()
   } catch (e) {
     toast('No es un archivo de Sidebery válido: ' + e.message, 7000)
   }
+}
+
+// Lo importado pasa a ser de cada pestaña (viaja con ella y sobrevive a reinicios y a
+// cambios de dirección); el árbol se fija en openerTabId, que Pestañario guarda y repone.
+async function adoptImport() {
+  const imp = S.sbImport
+  if (!imp || !imp.tabCount) return 0
+  let n = 0
+  for (const i of S.info.values()) {
+    if (!i.sb || !i.sb.panel) continue
+    const old = S.learned[i.id]
+    if (!old || old[1] < imp.time) {
+      S.learned[i.id] = [i.sb.panel, imp.time]
+      browser.sessions.setTabValue(i.id, 'sbp', S.learned[i.id]).catch(() => {})
+    }
+    n++
+    if (i.tab.openerTabId === undefined && i.parent !== -1) browser.tabs.update(i.id, { openerTabId: i.parent }).catch(() => {})
+  }
+  await browser.storage.local.set({ learned: S.learned })
+  return n
 }
 
 function download(name, text, type) {

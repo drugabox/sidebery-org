@@ -32,7 +32,7 @@ En Pestañario: ⚙ → *Conexión con Sidebery*, que muestra si está funcionan
 
 1. **Imprescindible.** Sidebery → *Settings → General* → activa *«Add preface to the browser window's title if Sidebery sidebar is active»* y en *«Preface value»* escribe `⟦%PN⟧ ` (mejor con el espacio final). El título de la ventana empezará por el nombre del panel activo.
 2. **Recomendado:** Sidebery → *Settings → Tabs* → *«Hide native tabs of inactive panels»*, y en Pestañario marca la casilla equivalente (⚙). Así, cada vez que abres un panel en Sidebery, Pestañario aprende el panel entero al instante, sin hacer nada más. Sin esta opción solo aprende la pestaña activa.
-3. **Opcional, colores y títulos que pusiste a las pestañas en Sidebery:** Sidebery → *Settings → Snapshots → «Create snapshot»* y después *Settings → Help → «Export addon data»*. Suelta el archivo sobre Pestañario. Sin una instantánea previa, el archivo solo trae los paneles (nombres, colores y orden).
+3. **Importar una sola vez** (para ubicar de golpe todas las pestañas, con sus colores y títulos de Sidebery): en Sidebery, *Settings → Snapshots → «Create snapshot»* y después *Settings → Help → «Export addon data»*; suelta el archivo sobre Pestañario. Cada pestaña se queda con su panel y su árbol (viajan con ella y sobreviven a reinicios), así que no hace falta repetirlo. A partir de ahí todo se sigue en vivo: mover, cerrar, abrir, carpetas y paneles nuevos (estos últimos, al abrirlos en Sidebery). Solo los colores que cambies después en Sidebery no se actualizan.
 
 Las pestañas que aún no se pueden ubicar aparecen en «Sin identificar»; las deducidas por posición llevan un «?».
 
@@ -60,6 +60,7 @@ Firefox consulta `updates.json` una vez al día y se actualiza solo (`about:addo
 - **Notas:** Markdown; `[[Título o dirección]]` enlaza otra pestaña y `#etiqueta` añade etiquetas. El panel de detalles muestra vínculos, menciones y quién la enlaza.
 - **Búsqueda** (busca dentro de la carpeta actual y sus subcarpetas): texto, `#etiqueta`, `panel:trabajo`, `site:youtube`, `color:red`, `en:colección`, `es:abierta|cerrada|dormida|sonando|fijada|ficha|nota`. Con `-` delante se niega.
 - **Copia:** ⚙ → exportar o importar JSON, o exportar a Markdown para Obsidian.
+- **Apariencia** (⚙): los mismos 22 temas que `duplicados-firefox` (Catppuccin, Dracula, Nord, Gruvbox…), color de acento, tamaño del texto, densidad de las filas y redondeo. El circulito de cada pestaña indica su estado: relleno = cargada, vacío = dormida, discontinuo = cerrada.
 
 ### Atajos
 
@@ -81,6 +82,7 @@ manifest.json         Manifiesto (Firefox 128+)
 background.js         Abre el explorador, aprende paneles, miniaturas
 lib/model.js          Lógica pura: datos de Sidebery, paneles, árbol, movimientos, búsqueda, notas
 lib/db.js             IndexedDB: fichas, colecciones, miniaturas
+lib/themes.js         Temas (las paletas de duplicados-firefox)
 explorer/             El explorador (pestaña o ventana)
 test/                 Pruebas (incluye todos los casos de movimiento contra la regla de Sidebery)
 ```
