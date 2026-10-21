@@ -48,6 +48,7 @@ const S = {
   focus: null,
   anchor: null,
   expanded: new Set(),
+  expandedP: new Set(),
   cut: null,
   rows: [], // filas visibles (detalles) o elementos (miniaturas)
   query: M.parseQuery(''),
@@ -147,6 +148,7 @@ function applyLook() {
   $('#sort').value = s.sort
   $('#zoom').value = s.zoom
   $('#zoom').hidden = s.view !== 'icons'
+  $('#btnExpand').hidden = $('#btnCollapse').hidden = s.view !== 'details'
   for (const b of document.querySelectorAll('#views button')) b.classList.toggle('on', b.dataset.view === s.view)
   $('#btnInspector').classList.toggle('on', s.insp)
 }
@@ -225,8 +227,10 @@ function buildModel(tabs, wins) {
       if (m && m.panel && (!k || imp.time > k.time)) k = { panel: m.panel, time: imp.time }
       if (k) known.set(t.id, k)
     }
-    const asg = M.assignPanels(list, known)
-    const tree = M.computeTree(list, t => asg.get(t.id).panel)
+    const asg = M.assignPanels(list, known, imp ? imp.panels.map(p => p.name) : [])
+    const panelOf = t => asg.get(t.id).panel
+    const hint = M.parentsFromLevels(list, t => match.get(t.id)?.lvl, panelOf)
+    const tree = M.computeTree(list, panelOf, hint)
 
     let prevName = null
     for (const t of list) {
@@ -337,6 +341,23 @@ function buildItems() {
     if (S.tabByUrl.has(f.url)) continue
     const it = makeFichaItem(f)
     S.items.set(it.key, it)
+  }
+  for (const w of S.wins) {
+    const counts = new Map()
+    let pinned = 0
+    for (const it of S.items.values()) {
+      if (it.kind !== 'tab' || it.win !== w.id) continue
+      if (it.pinned) pinned++
+      else counts.set(it.panel, (counts.get(it.panel) || 0) + 1)
+    }
+    const names = [...S.panelOrder]
+    if (counts.has('')) names.push('')
+    for (const name of names) {
+      const meta = S.panelMeta.get(name) || {}
+      const key = `p:${w.id}|${name}`
+      S.items.set(key, { key, kind: 'panel', win: w.id, panel: name, title: (S.wins.length > 1 ? winName(w.id) + ' · ' : '') + panelLabel(name), color: M.colorCss(meta.color) || (name ? hashColor(name) : ''), count: counts.get(name) || 0, tags: [], cols: [], domain: '', last: 0 })
+    }
+    if (pinned) S.items.set('P:' + w.id, { key: 'P:' + w.id, kind: 'pinnedf', win: w.id, title: (S.wins.length > 1 ? winName(w.id) + ' · ' : '') + 'Fijadas', count: pinned, tags: [], cols: [], domain: '', last: 0 })
   }
   for (const c of S.cols.values()) {
     S.items.set('c:' + c.id, { key: 'c:' + c.id, kind: 'col', id: c.id, title: c.name, color: c.color, tags: [], cols: [], last: c.created, domain: '' })
@@ -465,8 +486,13 @@ function contents(loc) {
       return all.filter(it => it.kind === 'ficha')
     case 'all':
     default:
-      return all.filter(it => it.kind === 'tab').sort(tabOrder)
+      return all.filter(it => it.kind === 'pinnedf' || it.kind === 'panel').sort((a, b) => a.win - b.win || (a.kind === 'pinnedf' ? -1 : b.kind === 'pinnedf' ? 1 : panelRank(a.panel) - panelRank(b.panel)))
   }
+}
+
+function panelRank(name) {
+  const i = S.panelOrder.indexOf(name)
+  return name && i >= 0 ? i : 1e6
 }
 
 function tabOrder(a, b) {
@@ -526,7 +552,7 @@ function locTitle(loc) {
     case 'archive':
       return 'Archivo'
     default:
-      return 'Todas las pestañas'
+      return 'Todos los paneles'
   }
 }
 
@@ -594,9 +620,13 @@ function go(loc, push = true) {
 // ---------------------------------------------------------------------------
 // Filas de la vista
 
+function isFolder(it) {
+  return it.kind === 'col' || it.kind === 'tagdir' || it.kind === 'panel' || it.kind === 'pinnedf' || (it.kind === 'tab' && it.kids.length > 0)
+}
+
 function sortItems(arr) {
   const s = S.settings.sort
-  const kindRank = it => (it.kind === 'col' || it.kind === 'tagdir' ? 0 : 1)
+  const kindRank = it => (isFolder(it) ? 0 : 1)
   if (s === 'natural') return arr
   const cmp = {
     title: (a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }),
@@ -614,12 +644,13 @@ function buildRows() {
   let base
   if (!S.query.empty) base = subtree(S.loc).filter(it => M.matches(it, S.query))
   else base = contents(S.loc)
-  if (S.loc.t === 'all' && S.query.empty && S.settings.view === 'details') base = base.filter(it => it.parent === -1 || !it.open)
   base = sortItems(base.filter(Boolean))
   const rows = []
   if (treeMode()) {
     const walk = (it, lvl) => {
       rows.push({ it, lvl })
+      if (it.kind === 'panel' && S.expandedP.has(it.key)) for (const c of tabsOfPanel(it.win, it.panel).filter(t => t.parent === -1)) walk(c, lvl + 1)
+      if (it.kind === 'pinnedf' && S.expandedP.has(it.key)) for (const c of contents({ t: 'pinned', w: it.win })) walk(c, lvl + 1)
       if (it.kids && it.kids.length && S.expanded.has(it.id)) for (const k of it.kids) {
         const c = tabItem(k)
         if (c) walk(c, lvl + 1)
@@ -680,24 +711,28 @@ function tn({ loc, label, icon = '', count = '', lvl = 0, open = null, openKey =
   return `<div class="tn${cur}" style="padding-left:${6 + lvl * 14}px" data-loc='${esc(locKey(loc))}' data-drop-loc='${esc(locKey(loc))}' title="${esc(title || label)}">${tw}<span class="ti">${icon || (color ? `<span class="dot" style="background:${esc(color)}"></span>` : '')}</span><span class="tl">${esc(label)}</span>${count !== '' ? `<span class="tc">${count}</span>` : ''}</div>`
 }
 
+function sec(key, label, extra = '') {
+  const open = !S.treeOpen.has('x' + key)
+  return [`<div class="tsec"><span class="tw" data-tog="x${key}" style="cursor:pointer">${open ? '▾' : '▸'}</span><span class="grow" data-tog="x${key}" style="cursor:pointer">${label}</span>${extra}</div>`, open]
+}
+
 function renderTree() {
   const h = []
   const multi = S.wins.length > 1
   const hasSb = S.panelOrder.length > 0
   const allTabs = [...S.items.values()].filter(it => it.kind === 'tab')
+  const curPanel = currentPanelKey()
 
-  h.push(tn({ loc: { t: 'all' }, label: 'Todas las pestañas', icon: '🗂', count: allTabs.length }))
+  h.push(tn({ loc: { t: 'all' }, label: 'Todos los paneles', icon: '🗂', count: allTabs.length }))
 
   for (const w of S.wins) {
     const wk = 'w' + w.id
     let lvl = 0
-    if (multi) {
-      const open = S.treeOpen.has(wk) || w.focused
-      h.push(`<div class="tsec"><span class="tw" data-tog="${wk}" style="cursor:pointer">${open ? '▾' : '▸'}</span>&nbsp;${esc(winName(w.id))}${w.focused ? ' · actual' : ''}</div>`)
-      if (!open) continue
-    } else {
-      h.push(`<div class="tsec"><span class="grow">Paneles de Sidebery</span></div>`)
-    }
+    const [head, open] = sec(wk, multi ? `${esc(winName(w.id))}${w.focused ? ' · actual' : ''}` : 'Paneles de Sidebery')
+    h.push(head)
+    if (!open) continue
+    const unknown = allTabs.filter(it => it.win === w.id && !it.pinned && !it.panel).length
+    if (unknown) h.push(`<div class="hint">${unknown} pestañas aún sin panel. <b><a href="#" data-act="scan" data-win="${w.id}">Reconocer paneles</a></b>: Pestañario pasa unos segundos por algunas pestañas para ver dónde empieza y acaba cada panel.</div>`)
     const pinned = allTabs.filter(it => it.win === w.id && it.pinned)
     if (pinned.length) h.push(tn({ loc: { t: 'pinned', w: w.id }, label: 'Fijadas', icon: '📌', count: pinned.length, lvl }))
     const names = S.panelOrder.slice()
@@ -707,7 +742,7 @@ function renderTree() {
       const meta = S.panelMeta.get(name) || {}
       const pk = `p${w.id}|${name}`
       const roots = tabs.filter(it => it.parent === -1 && it.kids.length)
-      const open = S.treeOpen.has(pk)
+      const open = S.treeOpen.has(pk) || (curPanel === pk && !S.treeOpen.has('-' + pk))
       const icon = meta.icon ? `<img src="${esc(meta.icon)}" alt="">` : ''
       h.push(tn({ loc: { t: 'panel', w: w.id, p: name }, label: panelLabel(name), icon, color: M.colorCss(meta.color) || hashColor(name), count: tabs.length, lvl, open: roots.length ? open : null, openKey: pk }))
       if (open) for (const r of roots) treeFolder(h, r, lvl + 1)
@@ -719,7 +754,8 @@ function renderTree() {
   }
 
   // Colecciones
-  h.push(`<div class="tsec"><span class="grow" data-loc='${esc(locKey({ t: 'cols' }))}' style="cursor:pointer">Colecciones</span><button data-act="newcol" title="Nueva colección">＋</button></div>`)
+  const [colHead, colOpen] = sec('cols', 'Colecciones', `<button data-act="newcol" title="Nueva colección">＋</button>`)
+  h.push(colHead)
   const colRec = (parent, lvl) => {
     for (const c of colChildren(parent)) {
       const kids = colChildren(c.id)
@@ -730,12 +766,13 @@ function renderTree() {
       if (open) colRec(c.id, lvl + 1)
     }
   }
-  colRec(null, 0)
-  if (!S.cols.size) h.push(`<div class="hint">Las colecciones son carpetas virtuales: una pestaña puede estar en varias a la vez (como un acceso directo) sin moverla de su panel. Arrastra pestañas aquí.</div>`)
+  if (colOpen) colRec(null, 0)
+  if (colOpen && !S.cols.size) h.push(`<div class="hint">Las colecciones son carpetas virtuales: una pestaña puede estar en varias a la vez (como un acceso directo) sin moverla de su panel. Arrastra pestañas aquí.</div>`)
 
   // Etiquetas
   if (S.tagCount.size) {
-    h.push(`<div class="tsec"><span class="grow" data-loc='${esc(locKey({ t: 'tags' }))}' style="cursor:pointer">Etiquetas</span></div>`)
+    const [tagHead, tagOpen] = sec('tags', 'Etiquetas')
+    h.push(tagHead)
     const tagRec = (prefix, lvl) => {
       const list = [...S.tagCount.keys()].filter(t => (prefix ? t.startsWith(prefix + '/') && !t.slice(prefix.length + 1).includes('/') : !t.includes('/'))).sort()
       for (const t of list) {
@@ -746,24 +783,51 @@ function renderTree() {
         if (open) tagRec(t, lvl + 1)
       }
     }
-    tagRec('', 0)
+    if (tagOpen) tagRec('', 0)
   }
 
   // Biblioteca
-  h.push(`<div class="tsec">Biblioteca</div>`)
+  const [libHead, libOpen] = sec('lib', 'Biblioteca')
+  h.push(libHead)
   const archived = [...S.items.values()].filter(it => it.kind === 'ficha').length
-  h.push(tn({ loc: { t: 'saved' }, label: 'Fichas', icon: '🗃', count: S.fichas.size, title: 'Pestañas con etiquetas, notas, vínculos o colecciones' }))
-  h.push(tn({ loc: { t: 'archive' }, label: 'Archivo (cerradas)', icon: '📦', count: archived }))
+  if (libOpen) {
+    h.push(tn({ loc: { t: 'cols' }, label: 'Todas las colecciones', icon: '📚', count: S.cols.size }))
+    h.push(tn({ loc: { t: 'tags' }, label: 'Todas las etiquetas', icon: '#', count: S.tagCount.size }))
+    h.push(tn({ loc: { t: 'saved' }, label: 'Fichas', icon: '🗃', count: S.fichas.size, title: 'Pestañas con etiquetas, notas, vínculos o colecciones' }))
+    h.push(tn({ loc: { t: 'archive' }, label: 'Archivo (cerradas)', icon: '📦', count: archived }))
+  }
 
   $('#tree').innerHTML = h.join('')
 }
 
-function treeFolder(h, it, lvl) {
+// Panel y carpetas que contienen la ubicación actual: se despliegan solos
+function currentPanelKey() {
+  const l = S.loc
+  if (l.t === 'panel') return `p${l.w}|${l.p}`
+  if (l.t === 'folder') {
+    const it = tabItem(l.id)
+    return it ? `p${it.win}|${it.panel}` : null
+  }
+  return null
+}
+
+function ancestorsOfLoc() {
+  const set = new Set()
+  if (S.loc.t !== 'folder') return set
+  let p = S.info.get(S.loc.id)?.parent
+  while (p !== undefined && p !== -1) {
+    set.add(p)
+    p = S.info.get(p)?.parent
+  }
+  return set
+}
+
+function treeFolder(h, it, lvl, anc = ancestorsOfLoc()) {
   const k = 't' + it.id
-  const open = S.treeOpen.has(k)
+  const open = S.treeOpen.has(k) || (anc.has(it.id) && !S.treeOpen.has('-' + k))
   const sub = it.kids.map(tabItem).filter(c => c && c.kids.length)
   h.push(tn({ loc: { t: 'folder', id: it.id }, label: it.title, icon: favHtml(it), count: it.kids.length, lvl, open: sub.length ? open : null, openKey: k, color: it.sbColor }))
-  if (open) for (const c of sub) treeFolder(h, c, lvl + 1)
+  if (open) for (const c of sub) treeFolder(h, c, lvl + 1, anc)
 }
 
 // --- Vista principal
@@ -833,6 +897,10 @@ function renderDetails() {
   win.innerHTML = html
 }
 
+function folderSmall(color) {
+  return `<span class="foldersm" style="${color ? `--fc:${esc(color)}` : ''}"><svg viewBox="0 0 64 52"><path d="M2 8a5 5 0 0 1 5-5h16l6 6h28a5 5 0 0 1 5 5v31a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5z"/><path class="front" d="M2 18a5 5 0 0 1 5-5h50a5 5 0 0 1 5 5v27a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5z"/></svg></span>`
+}
+
 function rowHtml(r, i, tm) {
   const it = r.it
   const cls = ['r']
@@ -843,8 +911,10 @@ function rowHtml(r, i, tm) {
   const stripe = it.sbColor || it.color || ''
   let tw = '<span class="tw"></span>'
   if (tm && it.kind === 'tab' && it.kids.length) tw = `<span class="tw" data-exp="${it.id}">${S.expanded.has(it.id) ? '▾' : '▸'}</span>`
+  if (tm && it.kind === 'panel') tw = `<span class="tw" data-expp="${esc(it.key)}">${S.expandedP.has(it.key) ? '▾' : '▸'}</span>`
   let icon
-  if (it.kind === 'col') icon = '<span class="fav ph" style="background:none;font-size:14px">📁</span>'
+  if (it.kind === 'col' || it.kind === 'panel' || it.kind === 'pinnedf') icon = folderSmall(it.kind === 'pinnedf' ? '' : it.color)
+  else if (it.kind === 'tab' && it.kids.length) icon = folderSmall(it.sbColor || it.color) + favHtml(it)
   else if (it.kind === 'tagdir') icon = '<span class="fav ph" style="background:none;color:var(--acc);font-size:14px">#</span>'
   else icon = favHtml(it)
   const badges = []
@@ -860,6 +930,8 @@ function rowHtml(r, i, tm) {
     panel = it.panel || it.kind === 'tab' ? `<span class="dot" style="background:${c}"></span> ${esc(it.kind === 'tab' ? panelLabel(it.panel) : it.panel)}${it.kind === 'tab' && !it.sure && !it.pinned ? ' <span class="muted" title="Deducido por posición">?</span>' : ''}` : ''
   } else if (it.kind === 'col') {
     panel = 'Colección'
+  } else if (it.kind === 'panel' || it.kind === 'pinnedf') {
+    panel = S.wins.length > 1 ? esc(winName(it.win)) : 'Panel de Sidebery'
   } else panel = 'Etiqueta'
   const tags = (it.tags || []).slice(0, 4).map(t => `<span class="tag" data-tag="${esc(t)}">#${esc(t)}</span>`).join('')
   let st = ''
@@ -873,6 +945,7 @@ function rowHtml(r, i, tm) {
     st = f.join(' ')
   } else if (it.kind === 'ficha') st = 'cerrada'
   else if (it.kind === 'col') st = fichaItemsIn(new Set([it.id])).length + ' elem.'
+  else if (it.kind === 'panel' || it.kind === 'pinnedf') st = it.count + ' pest.'
   else if (it.kind === 'tagdir') st = (S.tagCount.get(it.tag) || 0) + ' elem.'
   const title = esc(it.title) + (it.customTitle && it.customTitle !== it.realTitle ? '' : '')
   return `<div class="${cls.join(' ')}" data-key="${esc(it.key)}" data-i="${i}" draggable="true" style="--lvl:${r.lvl};${stripe ? `border-left-color:${esc(stripe)}` : ''}" title="${esc(it.url || it.title)}">
@@ -917,6 +990,11 @@ function renderIcons() {
   $('#win').innerHTML = html
 }
 
+// Carpeta grande (con color e icono encima) para la vista de miniaturas
+function folderBig(color, overlay, count) {
+  return `<span class="folderbig" style="${color ? `--fc:${esc(color)}` : ''}"><svg viewBox="0 0 64 52"><path d="M2 8a5 5 0 0 1 5-5h16l6 6h28a5 5 0 0 1 5 5v31a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5z"/><path class="front" d="M2 18a5 5 0 0 1 5-5h50a5 5 0 0 1 5 5v27a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5z"/></svg>${overlay ? `<span class="ov">${overlay}</span>` : ''}</span>${count ? `<span class="kids">${count}</span>` : ''}`
+}
+
 function cardHtml(it, i) {
   const cls = ['c']
   if (S.sel.has(it.key)) cls.push('sel')
@@ -925,13 +1003,15 @@ function cardHtml(it, i) {
   if (it.discarded || it.kind === 'ficha') cls.push('dim')
   let th
   let bg = ''
-  if (it.kind === 'col') th = `<span class="folder">📁</span>`
+  if (it.kind === 'col' || it.kind === 'panel' || it.kind === 'pinnedf') th = folderBig(it.kind === 'pinnedf' ? '' : it.color, it.kind === 'pinnedf' ? '📌' : '', it.count)
   else if (it.kind === 'tagdir') th = `<span class="folder" style="color:var(--acc)">#</span>`
+  else if (it.kind === 'tab' && it.kids.length) th = folderBig(it.sbColor || it.color, favHtml(it), it.kids.length)
   else {
-    const t = thumbFor(it.nurl)
-    if (t) bg = `background-image:url('${t}')`
-    th = t ? '' : `<span class="big" style="background:${hashColor(it.domain || it.title || '')}">${favOk(it.fav) ? `<img src="${esc(it.fav)}" alt="">` : esc((it.domain || it.title || '?')[0].toUpperCase())}</span>`
-    if (it.kind === 'tab' && it.kids.length) th += `<span class="kids" title="Contiene ${it.kids.length} pestañas">📂 ${it.kids.length}</span>`
+    const yt = M.youtubeId(it.url)
+    const t = yt ? null : thumbFor(it.nurl)
+    if (yt) bg = `background-image:${S.settings.zoom >= 3 ? `url('${M.youtubeThumb(yt, true)}'), ` : ''}url('${M.youtubeThumb(yt)}')`
+    else if (t) bg = `background-image:url('${t}')`
+    th = yt ? '<span class="play">▶</span>' : t ? '' : `<span class="big" style="background:${hashColor(it.domain || it.title || '')}">${favOk(it.fav) ? `<img src="${esc(it.fav)}" alt="">` : esc((it.domain || it.title || '?')[0].toUpperCase())}</span>`
     const fl = []
     if (it.pinned) fl.push('📌')
     if (it.audible) fl.push(it.muted ? '🔇' : '🔊')
@@ -1030,7 +1110,12 @@ function renderInspector() {
     return
   }
   const it = items[0]
-  if (it.kind === 'col') el.innerHTML = inspectorCol(it)
+  if (it.kind === 'panel' || it.kind === 'pinnedf') {
+    const loc0 = S.loc
+    S.loc = it.kind === 'panel' ? { t: 'panel', w: it.win, p: it.panel } : { t: 'pinned', w: it.win }
+    el.innerHTML = inspectorLocation()
+    S.loc = loc0
+  } else if (it.kind === 'col') el.innerHTML = inspectorCol(it)
   else if (it.kind === 'tagdir') el.innerHTML = inspectorTag(it)
   else el.innerHTML = inspectorItem(it)
 }
@@ -1106,7 +1191,8 @@ function backlinks(it) {
 function inspectorItem(it) {
   const f = fichaFor(it.nurl)
   const meta = S.panelMeta.get(it.panel) || {}
-  const thumb = it.nurl && S.thumbs.get(it.nurl)
+  const yt = M.youtubeId(it.url)
+  const thumb = yt ? M.youtubeThumb(yt, true) : it.nurl && S.thumbs.get(it.nurl)
   const kv = []
   if (it.kind === 'tab') {
     kv.push(['Panel', `<span class="dot" style="background:${M.colorCss(meta.color) || hashColor(it.panel || '')}"></span> ${esc(panelLabel(it.panel))}${it.sure || it.pinned ? '' : ' <span class="muted">(deducido)</span>'}`])
@@ -1132,7 +1218,7 @@ function inspectorItem(it) {
 
   return `<h2>${it.kind === 'tab' || it.kind === 'ficha' ? favHtml(it) + ' ' : ''}${esc(it.title)}</h2>
 <div class="url" data-act="copyurl" title="Copiar dirección">${esc(it.url)}</div>
-${thumb ? `<img class="thumb" src="${thumb}" alt="">` : ''}
+${thumb ? `<img class="thumb" src="${esc(thumb)}" alt=""${yt ? ` data-fallback="${esc(M.youtubeThumb(yt))}"` : ''}>` : ''}
 <div class="btns">
   ${it.kind === 'tab' ? `<button class="primary" data-act="activate">Ir a la pestaña</button>${it.kids.length ? '<button data-act="enter">Abrir carpeta</button>' : ''}<button data-act="discard" title="Liberar memoria">Dormir</button><button data-act="archive" title="Guardar como ficha y cerrar">Archivar</button><button class="danger" data-act="close">Cerrar</button>` : `<button class="primary" data-act="reopen">Abrir</button><button data-act="reopenpanel">Abrir en panel…</button><button class="danger" data-act="delficha">Borrar ficha</button>`}
 </div>
@@ -1271,6 +1357,8 @@ function openItem(it, opts = {}) {
   if (!it) return
   if (it.kind === 'col') return go({ t: 'col', id: it.id })
   if (it.kind === 'tagdir') return go({ t: 'tag', tag: it.tag })
+  if (it.kind === 'panel') return go({ t: 'panel', w: it.win, p: it.panel })
+  if (it.kind === 'pinnedf') return go({ t: 'pinned', w: it.win })
   if (it.kind === 'ficha') return reopen([it])
   if (opts.enter && it.kids && it.kids.length) return go({ t: 'folder', id: it.id })
   return activate(it)
@@ -1417,6 +1505,17 @@ async function moveTabs(ids, target) {
   }
   toast(`${order.length} pestaña${order.length > 1 ? 's' : ''} → ${panelLabel(panel)}`)
   return true
+}
+
+async function scanPanels(win) {
+  win = win || (S.wins.find(w => w.focused) || S.wins[0])?.id
+  if (!win) return
+  toast('Reconociendo paneles… (unos segundos)', 60000)
+  const me = await browser.tabs.getCurrent()
+  const r = await browser.runtime.sendMessage({ type: 'scan', windowId: win, returnTo: me && me.windowId === win ? me.id : undefined })
+  if (!r || !r.ok) return toast((r && r.error) || 'No se pudo reconocer', 9000)
+  toast(`Listo: ${r.panels.length} paneles (${r.panels.join(', ')}) mirando ${r.probes} pestañas`, 8000)
+  scheduleRefresh()
 }
 
 async function closeTabs(items) {
@@ -1632,6 +1731,22 @@ function up() {
   if (p) go(p)
 }
 
+function expandAll(on) {
+  if (!on) {
+    S.expanded.clear()
+    S.expandedP.clear()
+  } else {
+    for (const r of S.rows) {
+      if (r.it.kind === 'panel') {
+        S.expandedP.add(r.it.key)
+        for (const t of tabsOfPanel(r.it.win, r.it.panel)) if (t.kids.length) S.expanded.add(t.id)
+      }
+      if (r.it.kind === 'tab') for (const id of [r.it.id, ...descendants(r.it.id)]) if (S.info.get(id)?.kids.length) S.expanded.add(id)
+    }
+  }
+  renderSoon()
+}
+
 function setView(v) {
   saveSettings({ view: v })
   render()
@@ -1696,10 +1811,18 @@ document.addEventListener('keydown', async e => {
         S.expanded.add(it.id)
         return renderSoon()
       }
+      if (it && it.kind === 'panel' && treeMode()) {
+        S.expandedP.add(it.key)
+        return renderSoon()
+      }
       return
     case 'ArrowLeft':
       e.preventDefault()
       if (icons) return moveFocus(-1, e)
+      if (it && it.kind === 'panel' && S.expandedP.has(it.key)) {
+        S.expandedP.delete(it.key)
+        return renderSoon()
+      }
       if (it && treeMode()) {
         if (S.expanded.has(it.id)) {
           S.expanded.delete(it.id)
@@ -1709,6 +1832,9 @@ document.addEventListener('keydown', async e => {
         if (p && rowIndex(p.key) >= 0) return selectOnly(p.key)
       }
       return
+    case '*':
+      e.preventDefault()
+      return expandAll(true)
     case 'Home':
       e.preventDefault()
       return moveFocus(-1e9, e)
@@ -1718,8 +1844,8 @@ document.addEventListener('keydown', async e => {
     case 'Enter':
       e.preventDefault()
       if (!it) return
-      if (e.ctrlKey || e.shiftKey) return it.kind === 'tab' && it.kids.length ? go({ t: 'folder', id: it.id }) : openItem(it)
-      return openItem(it, { enter: icons })
+      if (e.ctrlKey || e.shiftKey) return it.kind === 'tab' ? activate(it) : openItem(it)
+      return openItem(it, { enter: true })
     case 'Backspace':
       e.preventDefault()
       return up()
@@ -1811,6 +1937,14 @@ const renderMainSoon = (() => {
 
 listEl().addEventListener('mousedown', e => {
   if (e.button !== 0) return
+  const expp = e.target.closest('[data-expp]')
+  if (expp) {
+    const k = expp.dataset.expp
+    if (S.expandedP.has(k)) S.expandedP.delete(k)
+    else S.expandedP.add(k)
+    e.preventDefault()
+    return renderSoon()
+  }
   const exp = e.target.closest('[data-exp]')
   if (exp) {
     const id = +exp.dataset.exp
@@ -1845,8 +1979,8 @@ listEl().addEventListener('click', e => {
 
 listEl().addEventListener('dblclick', e => {
   const key = listClickKey(e)
-  if (!key || e.target.closest('[data-exp]')) return
-  openItem(S.items.get(key), { enter: S.settings.view === 'icons' })
+  if (!key || e.target.closest('[data-exp], [data-expp]')) return
+  openItem(S.items.get(key), { enter: true })
 })
 
 listEl().addEventListener('auxclick', e => {
@@ -1878,7 +2012,12 @@ $('#tree').addEventListener('click', e => {
   const tog = e.target.closest('[data-tog]')
   if (tog) {
     const k = tog.dataset.tog
-    if (S.treeOpen.has(k)) S.treeOpen.delete(k)
+    const shown = (tog.closest('.tsec, .tn')?.querySelector('.tw')?.textContent || '').trim() === '▾'
+    S.treeOpen.delete(k)
+    S.treeOpen.delete('-' + k)
+    if (k.startsWith('x')) {
+      if (shown) S.treeOpen.add(k)
+    } else if (shown) S.treeOpen.add('-' + k)
     else S.treeOpen.add(k)
     lsSet('treeOpen', [...S.treeOpen])
     return renderTree()
@@ -1888,6 +2027,7 @@ $('#tree').addEventListener('click', e => {
     e.preventDefault()
     if (act.dataset.act === 'newcol') return newCollection(S.loc.t === 'col' ? S.loc.id : null)
     if (act.dataset.act === 'setup') return openSettings('sidebery')
+    if (act.dataset.act === 'scan') return scanPanels(+act.dataset.win)
   }
   const n = e.target.closest('[data-loc]')
   if (n) go(JSON.parse(n.dataset.loc))
@@ -1913,6 +2053,11 @@ $('#status').addEventListener('click', e => {
 
 // ---------------------------------------------------------------------------
 // Inspector: acciones
+
+document.addEventListener('error', e => {
+  const img = e.target
+  if (img.tagName === 'IMG' && img.dataset.fallback && img.src !== img.dataset.fallback) img.src = img.dataset.fallback
+}, true)
 
 $('#inspector').addEventListener('click', async e => {
   const items = selectedItems()
@@ -2140,6 +2285,7 @@ function showItemMenu(x, y, items) {
     m.push({ label: 'Seleccionar todo', k: 'Ctrl+A', run: () => ((S.sel = new Set(S.rows.map(r => r.it.key))), renderSoon()) })
     return showMenu(x, y, m)
   }
+  if (one && (one.kind === 'panel' || one.kind === 'pinnedf')) return showLocMenu(x, y, one.kind === 'panel' ? { t: 'panel', w: one.win, p: one.panel } : { t: 'pinned', w: one.win })
   if (one && (one.kind === 'col' || one.kind === 'tagdir')) {
     m.push({ label: 'Abrir', k: 'Intro', run: () => openItem(one) })
     m.push({ label: 'Renombrar…', k: 'F2', run: () => renameAction(one) })
@@ -2187,6 +2333,7 @@ function showLocMenu(x, y, loc) {
     m.push({ label: 'Ir a la pestaña', run: () => activate(tabItem(loc.id)) })
   }
   if (loc.t === 'panel') {
+    m.push({ label: 'Reconocer paneles de nuevo', run: () => scanPanels(loc.w) })
     const tabs = tabsOfPanel(loc.w, loc.p)
     m.push({ label: `Dormir sus ${tabs.length} pestañas`, run: () => discardTabs(tabs) })
   }
@@ -2267,6 +2414,8 @@ function dropTarget(e) {
     const it = S.items.get(el.dataset.key)
     if (!it || dragKeys.includes(it.key)) return null
     if (it.kind === 'col') return { el, cls: 'drop-into', target: { kind: 'col', id: it.id } }
+    if (it.kind === 'panel') return items.some(i => i.kind === 'tab' || i.kind === 'ficha') ? { el, cls: 'drop-into', target: { kind: 'panel', win: it.win, panel: it.panel } } : null
+    if (it.kind === 'pinnedf') return null
     if (it.kind === 'tagdir') return { el, cls: 'drop-into', target: { kind: 'tag', tag: it.tag } }
     if (it.kind !== 'tab') return null
     if (!items.some(i => i.kind === 'tab' || i.kind === 'ficha')) return null
@@ -2369,7 +2518,8 @@ async function openSettings(section) {
   <li><b>Panel activo, en vivo.</b> En Sidebery: <i>Settings → General</i> → activa <i>«Add preface to the browser window's title if Sidebery sidebar is active»</i> y en <i>«Preface value»</i> escribe <code>⟦%PN⟧ </code>. Cada vez que cambias de panel, Pestañario apunta en qué panel está cada pestaña.<br>
   Estado: ${titleOk ? '<b style="color:#46a758">✓ detectado</b>' : `<b style="color:var(--danger)">✗ no detectado</b> <span class="muted">(título actual: ${esc(winTitle.slice(0, 60))})</span>`}</li>
   <li><b>Recomendado, más rápido:</b> en Sidebery, <i>Settings → Tabs</i> → <i>«Hide native tabs of inactive panels»</i>, y marca aquí: <label><input type="checkbox" id="setHide" ${s.hideInact ? 'checked' : ''}> Sidebery oculta las pestañas de los paneles inactivos</label>. Así aprende el panel entero de golpe, no solo la pestaña activa.</li>
-  <li><b>Nombres, orden y colores de los paneles y las pestañas.</b> En Sidebery: <i>Settings → Help → «Export addon data»</i> (todo marcado), o exporta una instantánea en JSON. Después: <button id="btnImport">Importar archivo de Sidebery…</button> (o suéltalo sobre esta página). Repite cuando cambies colores o paneles.<br>
+  <li><b>Separar los paneles ahora:</b> <button id="btnScan">Reconocer paneles</button> pasa unos segundos por algunas pestañas (prefiere las ya cargadas; las dormidas que despierte se vuelven a dormir) y te devuelve aquí.</li>
+  <li><b>Opcional, colores y títulos que pusiste a las pestañas en Sidebery:</b> en Sidebery, <i>Settings → Snapshots → «Create snapshot»</i> y después <i>Settings → Help → «Export addon data»</i> (todo marcado). Después: <button id="btnImport">Importar archivo de Sidebery…</button> (o suéltalo sobre esta página). Repite cuando cambies colores o paneles.<br>
   ${imp ? `Importado: ${imp.panels.length} paneles, ${imp.tabCount} pestañas, ${new Date(imp.time).toLocaleString()}. <button id="btnForget" class="danger">Olvidar</button>` : '<span class="muted">Nada importado todavía.</span>'}</li>
 </ol>
 <p class="small muted">Aprendidas en vivo: ${learnedN} pestañas. <button id="btnForgetLearned">Olvidar lo aprendido</button></p>
@@ -2391,7 +2541,7 @@ async function openSettings(section) {
 
 <h4>Atajos</h4>
 <p class="small">
-<code>Intro</code> ir a la pestaña (en miniaturas, entrar en la carpeta) · <code>Ctrl+Intro</code> abrir como carpeta · <code>Retroceso</code> subir · <code>Alt+←/→</code> atrás/adelante ·
+<code>Intro</code> o doble clic: abrir la carpeta o ir a la pestaña · <code>Ctrl+Intro</code> ir a la pestaña aunque tenga hijas · <code>*</code> desplegar todo · <code>Retroceso</code> subir · <code>Alt+←/→</code> atrás/adelante ·
 <code>→/←</code> desplegar/plegar · <code>Supr</code> cerrar (en colecciones: quitar el acceso directo) · <code>F2</code> renombrar · <code>T</code> etiquetas · <code>I</code> panel de detalles ·
 <code>Ctrl+X</code> / <code>Ctrl+V</code> cortar y pegar en otro panel/carpeta/colección · <code>Ctrl+C</code> copiar direcciones · <code>Ctrl+A</code> todo · <code>/</code> o <code>Ctrl+F</code> buscar · <code>Ctrl+1/2/3</code> vistas · <code>Ctrl+B</code> barra lateral · clic central cierra.
 Al arrastrar a una colección, <code>Ctrl</code> copia en vez de mover entre colecciones.</p>
@@ -2414,6 +2564,10 @@ Al arrastrar a una colección, <code>Ctrl</code> copia en vez de mover entre col
   dlg.querySelector('#setDensity').onchange = e => saveSettings({ density: e.target.value }).then(render)
   dlg.querySelector('#setOpen').onchange = e => saveSettings({ openMode: e.target.value })
   dlg.querySelector('#btnImport').onclick = () => pickFile(importSidebery)
+  dlg.querySelector('#btnScan').onclick = () => {
+    dlg.close()
+    scanPanels()
+  }
   dlg.querySelector('#btnForget') && (dlg.querySelector('#btnForget').onclick = async () => {
     await browser.storage.local.remove('sbImport')
     dlg.close()
@@ -2459,6 +2613,7 @@ async function importSidebery(file) {
     const text = await file.text()
     const data = M.parseSideberyExport(text)
     data.importedAt = Date.now()
+    if (!data.tabCount) toast('El archivo trae los nombres y colores de los paneles, pero no qué pestaña va en cada uno (Sidebery no tenía ninguna instantánea). Para los colores de las pestañas: en Sidebery, Settings → Snapshots → «Create snapshot», y vuelve a exportar.', 15000)
     await browser.storage.local.set({ sbImport: data })
     S.sbImport = data
     toast(`Sidebery: ${data.panels.length} paneles y ${data.tabCount} pestañas importados`, 6000)
@@ -2619,6 +2774,8 @@ $('#views').onclick = e => {
   const b = e.target.closest('[data-view]')
   if (b) setView(b.dataset.view)
 }
+$('#btnExpand').onclick = () => expandAll(true)
+$('#btnCollapse').onclick = () => expandAll(false)
 $('#sort').onchange = e => saveSettings({ sort: e.target.value }).then(render)
 $('#zoom').oninput = e => saveSettings({ zoom: +e.target.value }).then(renderMain)
 

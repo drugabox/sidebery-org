@@ -84,7 +84,7 @@ test('matchImport: por dirección y en orden, aunque haya repetidas', () => {
   assert.equal(m.has(3), false)
 })
 
-test('assignPanels: deduce por las vecinas', () => {
+test('assignPanels: deduce por las vecinas, sin inventar', () => {
   const tabs = [1, 2, 3, 4, 5, 6].map(id => ({ id }))
   tabs.unshift({ id: 0, pinned: true })
   const known = new Map([
@@ -92,11 +92,41 @@ test('assignPanels: deduce por las vecinas', () => {
     [3, { panel: 'A' }],
     [5, { panel: 'B' }],
   ])
-  const r = M.assignPanels(tabs, known)
+  const r = M.assignPanels(tabs, known, ['A', 'B'])
   assert.deepEqual(r.get(2), { panel: 'A', sure: true })
   assert.deepEqual(r.get(4), { panel: 'A', sure: false })
-  assert.deepEqual(r.get(6), { panel: 'B', sure: false })
+  assert.deepEqual(r.get(6), { panel: 'B', sure: true })
   assert.equal(r.get(0).panel, '')
+  // Sin conocer el orden de paneles, lo de fuera de lo conocido queda sin panel
+  const r2 = M.assignPanels(tabs, new Map([[3, { panel: 'A' }]]))
+  assert.deepEqual([1, 2, 3, 4].map(id => r2.get(id).panel), ['', '', 'A', ''])
+})
+
+test('assignPanels: una pestaña movida con dato viejo toma el panel que la rodea', () => {
+  const tabs = [1, 2, 3, 4, 5, 6, 7].map(id => ({ id }))
+  const known = new Map([1, 2, 3].map(id => [id, { panel: 'A', time: 10 }]).concat([4, 6, 7].map(id => [id, { panel: 'B', time: 10 }]), [[5, { panel: 'A', time: 1 }]]))
+  const r = M.assignPanels(tabs, known, ['A', 'B'])
+  assert.equal(r.get(5).panel, 'B')
+})
+
+test('parentsFromLevels: árbol desde los niveles importados', () => {
+  const tabs = [1, 2, 3, 4, 5, 6].map(id => ({ id }))
+  const lvl = { 1: 0, 2: 1, 3: 2, 4: 1, 5: 0, 6: 1 }
+  const panel = { 1: 'A', 2: 'A', 3: 'A', 4: 'A', 5: 'A', 6: 'B' }
+  const p = M.parentsFromLevels(tabs, t => lvl[t.id], t => panel[t.id])
+  assert.deepEqual([...p.entries()], [[2, 1], [3, 2], [4, 1]])
+  // computeTree lo usa cuando Firefox no tiene openerTabId
+  const n = M.computeTree(tabs, t => panel[t.id], p)
+  assert.deepEqual(n.get(3), { parent: 2, lvl: 2 })
+  assert.deepEqual(n.get(4), { parent: 1, lvl: 1 })
+})
+
+test('youtubeId: vídeos, shorts y enlaces cortos', () => {
+  assert.equal(M.youtubeId('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1'), 'dQw4w9WgXcQ')
+  assert.equal(M.youtubeId('https://youtu.be/dQw4w9WgXcQ?si=x'), 'dQw4w9WgXcQ')
+  assert.equal(M.youtubeId('https://m.youtube.com/shorts/dQw4w9WgXcQ'), 'dQw4w9WgXcQ')
+  assert.equal(M.youtubeId('https://www.youtube.com/@canal/videos'), '')
+  assert.equal(M.youtubeId('https://www.youtube.com/playlist?list=PL1'), '')
 })
 
 test('computeTree: como Sidebery (padre antes y en el mismo panel; adopta huecos)', () => {

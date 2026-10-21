@@ -42,6 +42,7 @@ browser.browserAction.onClicked.addListener((tab, info) => {
 
 browser.runtime.onMessage.addListener(msg => {
   if (msg && msg.type === 'open') return openExplorer(msg.mode, msg.hash || '')
+  if (msg && msg.type === 'scan') return scanPanels(msg.windowId, msg.returnTo)
 })
 
 browser.commands.onCommand.addListener(cmd => {
@@ -152,6 +153,183 @@ browser.tabs.onRemoved.addListener(() => {
     if (changed) await browser.storage.local.set({ learned })
   }, 5000)
 })
+
+// ---------------------------------------------------------------------------
+// Reconocer paneles: activa unas pocas pestañas y lee el panel que Sidebery pone en el título.
+// Como cada panel es un tramo seguido, basta con buscar los límites (búsqueda binaria).
+
+const wait = ms => new Promise(r => setTimeout(r, ms))
+let scanning = false
+
+async function scanPanels(windowId, returnTo) {
+  if (scanning) return { ok: false, error: 'Ya se está reconociendo' }
+  scanning = true
+  const woken = []
+  let original
+  try {
+    const s = await getSettings()
+    const re = new RegExp(s.prefaceRe)
+    const readName = async () => {
+      const w = await browser.windows.get(windowId)
+      const m = re.exec(w.title || '')
+      return m && m[1] ? m[1].trim() : null
+    }
+    if (!(await readName())) {
+      return { ok: false, error: 'No veo el panel en el título de la ventana: abre la barra de Sidebery en esta ventana y revisa «Preface value» (⟦%PN⟧).' }
+    }
+    const all = (await browser.tabs.query({ windowId })).sort((a, b) => a.index - b.index)
+    original = returnTo || (all.find(t => t.active) || {}).id
+    const list = all.filter(t => !t.pinned && !t.hidden)
+    const hiddenToo = all.filter(t => !t.pinned)
+    // Con «ocultar paneles inactivos» las pestañas ocultas también cuentan
+    const tabs = s.hideInact ? hiddenToo : list.length === hiddenToo.length ? list : hiddenToo
+    const n = tabs.length
+    if (!n) return { ok: true, probes: 0, learned: 0 }
+    const names = new Array(n).fill(null)
+    const now = Date.now()
+    let lastName = await readName()
+    let probes = 0
+
+    const probe = async i => {
+      const t = tabs[i]
+      probes++
+      if (t.discarded) woken.push(t.id)
+      await browser.tabs.update(t.id, { active: true })
+      const t0 = Date.now()
+      let name = null
+      await wait(90)
+      while (Date.now() - t0 < 1200) {
+        name = await readName()
+        if (name && (name !== lastName || Date.now() - t0 > 450)) break
+        await wait(50)
+      }
+      names[i] = name
+      lastName = name
+      if (s.hideInact && name) {
+        const vis = await browser.tabs.query({ windowId, hidden: false, pinned: false })
+        const ids = new Set(vis.map(v => v.id))
+        tabs.forEach((x, j) => {
+          if (ids.has(x.id)) names[j] = name
+        })
+      }
+      return name
+    }
+
+    // Elige una pestaña cargada cerca del medio (para no despertar las dormidas)
+    const pick = (lo, hi) => {
+      const mid = (lo + hi) >> 1
+      const span = Math.max(1, (hi - lo) >> 2)
+      for (let d = 0; d <= span; d++) {
+        for (const j of [mid - d, mid + d]) if (j > lo && j < hi && names[j] === null && !tabs[j].discarded) return j
+      }
+      return mid
+    }
+
+    const seg = async (lo, hi) => {
+      if (hi - lo <= 1) return
+      if (names[lo] !== null && names[lo] === names[hi]) {
+        for (let j = lo + 1; j < hi; j++) names[j] = names[lo]
+        return
+      }
+      const m = pick(lo, hi)
+      if (names[m] === null) await probe(m)
+      await seg(lo, m)
+      await seg(m, hi)
+    }
+
+    if (names[0] === null) await probe(0)
+    if (names[n - 1] === null) await probe(n - 1)
+    await seg(0, n - 1)
+
+    const upd = {}
+    tabs.forEach((t, j) => {
+      if (names[j]) upd[t.id] = [names[j], now]
+    })
+    await saveLearned(upd)
+    return { ok: true, probes, learned: Object.keys(upd).length, panels: [...new Set(names.filter(Boolean))] }
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) }
+  } finally {
+    if (original) await browser.tabs.update(original, { active: true }).catch(() => {})
+    const toSleep = woken.filter(id => id !== original)
+    if (toSleep.length) setTimeout(() => browser.tabs.discard(toSleep).catch(() => {}), 1500)
+    scanning = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Árbol tras reiniciar: Firefox olvida openerTabId (que Sidebery usa para reflejar el árbol).
+// Se guarda en los datos de sesión de cada pestaña (uid propio y el del padre) y se repone.
+
+const uid = () => Math.random().toString(36).slice(2, 10)
+let treeTimer
+function scheduleTreeSave() {
+  clearTimeout(treeTimer)
+  treeTimer = setTimeout(() => saveTree().catch(() => {}), 4000)
+}
+
+async function loadTreeCache() {
+  try {
+    const { tree } = await browser.storage.session.get('tree')
+    if (tree) return tree
+  } catch {}
+  // La página de fondo se ha reiniciado sin caché: leer de las pestañas
+  const tabs = await browser.tabs.query({})
+  const tree = {}
+  await Promise.all(tabs.map(t => browser.sessions.getTabValue(t.id, 'pu').then(v => {
+    if (Array.isArray(v)) tree[t.id] = v
+  }).catch(() => {})))
+  return tree
+}
+
+async function saveTree() {
+  const tabs = await browser.tabs.query({})
+  const old = await loadTreeCache() // tabId → [uid, uidPadre], ya guardado en la pestaña
+  const ids = new Set(tabs.map(t => t.id))
+  const uids = {}
+  for (const t of tabs) uids[t.id] = old[t.id] ? old[t.id][0] : uid()
+  const tree = {}
+  for (const t of tabs) {
+    const pid = t.openerTabId !== undefined && t.openerTabId !== t.id && ids.has(t.openerTabId) ? t.openerTabId : null
+    const o = old[t.id]
+    // Sin openerTabId (Firefox lo pierde al reiniciar) se conserva el padre guardado;
+    // Sidebery marca las raíces apuntándolas a sí mismas.
+    const parentUid = pid ? uids[pid] : t.openerTabId === undefined && o ? o[1] : ''
+    const v = [uids[t.id], parentUid]
+    tree[t.id] = v
+    if (!o || o[0] !== v[0] || o[1] !== v[1]) browser.sessions.setTabValue(t.id, 'pu', v).catch(() => {})
+  }
+  try {
+    await browser.storage.session.set({ tree })
+  } catch {}
+}
+
+async function restoreTree() {
+  const tabs = await browser.tabs.query({})
+  const vals = new Map()
+  await Promise.all(tabs.map(t => browser.sessions.getTabValue(t.id, 'pu').then(v => {
+    if (Array.isArray(v)) vals.set(t.id, v)
+  }).catch(() => {})))
+  const byUid = new Map([...vals.entries()].map(([id, v]) => [v[0], id]))
+  const byId = new Map(tabs.map(t => [t.id, t]))
+  for (const [id, v] of vals) {
+    const t = byId.get(id)
+    const pid = v[1] && byUid.get(v[1])
+    if (!t || !pid || t.openerTabId !== undefined) continue
+    const p = byId.get(pid)
+    if (!p || p.windowId !== t.windowId) continue
+    browser.tabs.update(id, { openerTabId: pid }).catch(() => {})
+  }
+  try {
+    await browser.storage.session.set({ tree: Object.fromEntries(vals) })
+  } catch {}
+}
+
+browser.runtime.onStartup.addListener(() => setTimeout(() => restoreTree().catch(() => {}), 8000))
+browser.tabs.onCreated.addListener(scheduleTreeSave)
+browser.tabs.onMoved.addListener(scheduleTreeSave)
+browser.tabs.onAttached.addListener(scheduleTreeSave)
+browser.tabs.onRemoved.addListener(scheduleTreeSave)
 
 // ---------------------------------------------------------------------------
 // Miniaturas de la pestaña que miras (solo si lo activas: necesita acceso a las webs)

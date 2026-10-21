@@ -13,7 +13,7 @@ Sidebery no ofrece ninguna vía para que otra extensión lea o cambie sus datos 
 | | Sidebery → Pestañario | Pestañario → Sidebery |
 |---|---|---|
 | **Orden de las pestañas** | ✅ en vivo | ✅ en vivo |
-| **Panel de cada pestaña** | ✅ en vivo (ver «Conectar» abajo) | ✅ en vivo: al mover aquí, Sidebery la cambia de panel |
+| **Panel de cada pestaña** | ✅ en vivo, con el botón «Reconocer paneles» y al cambiar de panel | ✅ en vivo: al mover aquí, Sidebery la cambia de panel |
 | **Árbol (padres e hijas)** | ✅ en vivo (Sidebery lo refleja en Firefox) | ✅ al soltar entre hijas o sobre una carpeta, queda dentro; Pestañario calcula el árbol igual que Sidebery |
 | **Nombre, color, icono y orden de los paneles** | 🔄 al importar el archivo de Sidebery | ❌ (se cambian en Sidebery) |
 | **Colores y títulos propios de las pestañas** | 🔄 al importar el archivo de Sidebery | ❌ Pestañario tiene sus propios colores y nombres |
@@ -26,15 +26,18 @@ Dos límites que pone Sidebery:
 
 Si Sidebery añadiera algún día una API para otras extensiones, se podría sincronizar todo directamente.
 
-## Conectar con Sidebery (dos minutos)
+## Conectar con Sidebery
 
 En Pestañario: ⚙ → *Conexión con Sidebery*, que muestra si está funcionando. Sidebery está en inglés, así que sus opciones aparecen con su nombre original:
 
-1. **Panel activo, en vivo.** Sidebery → *Settings → General* → activa *«Add preface to the browser window's title if Sidebery sidebar is active»* y en *«Preface value»* escribe `⟦%PN⟧ ` (con el espacio final). El título de la ventana empezará por el nombre del panel; Pestañario lo lee y apunta en qué panel está cada pestaña que miras.
-2. **Recomendado:** Sidebery → *Settings → Tabs* → *«Hide native tabs of inactive panels»*, y en Pestañario marca *«Sidebery oculta las pestañas de los paneles inactivos»*. Así aprende el panel entero en cuanto lo abres, no solo la pestaña activa.
-3. **Nombres, colores y orden.** Sidebery → *Settings → Help → «Export addon data»* (todo marcado) y suelta el archivo sobre Pestañario (o ⚙ → *Importar archivo de Sidebery*). También vale una instantánea exportada en JSON. Repítelo cuando cambies colores o paneles.
+1. **Imprescindible.** Sidebery → *Settings → General* → activa *«Add preface to the browser window's title if Sidebery sidebar is active»* y en *«Preface value»* escribe `⟦%PN⟧ ` (mejor con el espacio final). El título de la ventana empezará por el nombre del panel activo.
+2. **Pulsa «Reconocer paneles»** (aviso en la barra lateral, o ⚙). Durante unos segundos Pestañario activa algunas pestañas y lee qué panel muestra Sidebery. Como cada panel es un tramo seguido, solo hace falta buscar dónde empieza y acaba cada uno: con 400 pestañas en 6 paneles, unas 30 miradas. Usa pestañas ya cargadas siempre que puede, vuelve a dormir las que despierte y al acabar te devuelve a donde estabas. Después sigue aprendiendo solo cada vez que cambias de panel.
+3. **Opcional, más rápido:** Sidebery → *Settings → Tabs* → *«Hide native tabs of inactive panels»*, y en Pestañario marca la casilla equivalente. Así reconoce un panel entero con una sola mirada.
+4. **Opcional, colores y títulos que pusiste a las pestañas en Sidebery:** Sidebery → *Settings → Snapshots → «Create snapshot»* y después *Settings → Help → «Export addon data»*. Suelta el archivo sobre Pestañario. Sin una instantánea previa, el archivo solo trae los paneles (nombres, colores y orden).
 
-Las pestañas cuyo panel aún no se ha visto se deducen por posición (Sidebery guarda cada panel seguido) y llevan un «?» hasta confirmarse.
+Las pestañas que aún no se pueden ubicar aparecen en «Sin identificar»; las deducidas por posición llevan un «?».
+
+**Árbol tras reiniciar Firefox:** Firefox olvida qué pestaña es hija de cuál. Pestañario lo guarda en los datos de sesión de cada pestaña y lo repone al arrancar.
 
 ## Instalación y actualizaciones automáticas
 
@@ -49,7 +52,8 @@ Firefox consulta `updates.json` una vez al día y se actualiza solo (`about:addo
 ## Uso
 
 - **Abrir:** botón de la barra o `Alt+Mayús+E`. Clic central en el botón (o ⧉ dentro) → ventana aparte redimensionable, que recuerda tamaño y posición. Clic derecho en una pestaña → *Ver en Pestañario*.
-- **Vistas:** *Detalles* (tabla con árbol desplegable), *Miniaturas* (cuadrícula con tamaño ajustable) y *Grafo* (vínculos, etiquetas y árbol; arrastra, haz zoom con la rueda, doble clic abre).
+- **Como un explorador de archivos:** *Todos los paneles* muestra cada panel de Sidebery como una carpeta de su color, y las pestañas con hijas también son carpetas. Doble clic o `Intro` abre una carpeta o va a la pestaña; `Ctrl+Intro` va a la pestaña aunque tenga hijas. En *Detalles*, las carpetas se despliegan con ▸ (o `→`/`←`), y ⊞/⊟ despliegan o pliegan todo.
+- **Vistas:** *Detalles* (tabla con árbol desplegable), *Miniaturas* (cuadrícula con tamaño ajustable; los vídeos de YouTube muestran su vista previa) y *Grafo* (vínculos, etiquetas y árbol; arrastra, haz zoom con la rueda, doble clic abre).
 - **Barra lateral:** paneles de Sidebery con sus carpetas, Fijadas, Colecciones, Etiquetas (anidadas con `/`), Fichas y Archivo.
 - **Reorganizar:** arrastra pestañas a un panel, a una carpeta, entre dos filas, a las migas de pan o a una colección o etiqueta. Las hijas viajan con su madre, como en Sidebery. También `Ctrl+X` y `Ctrl+V`.
 - **Base de datos:** una pestaña pasa a ser **ficha** cuando le pones etiquetas, nota, color, nombre propio, un vínculo o una colección. Las fichas sobreviven al cierre: *Archivar* guarda y cierra; desde *Archivo* se reabren, incluso en el panel que elijas.
@@ -60,14 +64,15 @@ Firefox consulta `updates.json` una vez al día y se actualiza solo (`about:addo
 
 ### Atajos
 
-`Intro` ir a la pestaña (en miniaturas, entrar en la carpeta) · `Ctrl+Intro` abrir como carpeta · `Retroceso` subir · `Alt+←/→` atrás y adelante · `→/←` desplegar y plegar · `Supr` cerrar · `F2` renombrar · `T` etiquetar · `I` panel de detalles · `Ctrl+C` copiar direcciones · `Ctrl+X/V` mover · `Ctrl+A` todo · `/` o `Ctrl+F` buscar · `Ctrl+1/2/3` vistas · `Ctrl+B` barra lateral · clic central cierra.
+`Intro`/doble clic abrir la carpeta o ir a la pestaña · `Ctrl+Intro` ir a la pestaña · `*` desplegar todo · `Retroceso` subir · `Alt+←/→` atrás y adelante · `→/←` desplegar y plegar · `Supr` cerrar · `F2` renombrar · `T` etiquetar · `I` panel de detalles · `Ctrl+C` copiar direcciones · `Ctrl+X/V` mover · `Ctrl+A` todo · `/` o `Ctrl+F` buscar · `Ctrl+1/2/3` vistas · `Ctrl+B` barra lateral · clic central cierra.
 
 ## Rendimiento
 
 - Sin dependencias ni frameworks; nada se compila.
 - El segundo plano es una página de eventos: solo despierta al cambiar de pestaña o de panel, y no hace nada más.
 - Las listas y cuadrículas solo dibujan lo que se ve. Con 3.000 pestañas: recarga completa en unos 55 ms, repintado en 7 ms y unos 6 ms por fotograma al desplazarse.
-- Las miniaturas son opcionales: se capturan solo de la pestaña que miras (nunca despiertan pestañas dormidas), se guardan pequeñas y se cargan a medida que aparecen.
+- Vista previa de YouTube: es la imagen pública del vídeo (`i.ytimg.com`). No captura nada ni despierta la pestaña, y funciona también con las dormidas y las cerradas.
+- Las capturas de otras webs son opcionales: se capturan solo de la pestaña que miras (nunca despiertan pestañas dormidas), se guardan pequeñas y se cargan a medida que aparecen.
 - El grafo deja de calcular en cuanto se asienta.
 
 ## Desarrollo

@@ -169,6 +169,7 @@ body.no-insp #inspector, body.no-insp .split[data-split="inspector"] { display: 
   align-items: center;
 }
 .tsec .grow { flex: 1; }
+.tsec .tw { width: 14px; margin-left: -6px; color: var(--fg2); font-size: 10px; }
 .tsec button { font-size: 11px; padding: 0 6px; text-transform: none; letter-spacing: 0; }
 .tn {
   display: flex;
@@ -284,6 +285,15 @@ body.no-insp #inspector, body.no-insp .split[data-split="inspector"] { display: 
 .c .th .big { width: 40%; max-width: 64px; aspect-ratio: 1; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; color: #fff; }
 .c .th .big img { width: 60%; height: 60%; object-fit: contain; }
 .c .th .folder { font-size: 46px; }
+.c .th .play { width: 40px; height: 28px; border-radius: 8px; background: #000b; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.folderbig, .foldersm { --fc: #e8b84a; position: relative; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.folderbig { width: 46%; max-width: 110px; }
+.foldersm { width: 18px; height: 16px; }
+.folderbig svg, .foldersm svg { width: 100%; height: auto; display: block; }
+.folderbig svg path, .foldersm svg path { fill: color-mix(in srgb, var(--fc) 70%, #000); }
+.folderbig svg path.front, .foldersm svg path.front { fill: var(--fc); }
+.folderbig .ov { position: absolute; left: 50%; top: 58%; transform: translate(-50%, -50%); display: flex; font-size: 20px; }
+.folderbig .ov .fav, .folderbig .ov img { width: 22px; height: 22px; border-radius: 4px; background: #fff; padding: 2px; }
 .c .th .kids { position: absolute; right: 6px; bottom: 6px; background: #000a; color: #fff; border-radius: 9px; padding: 0 7px; font-size: 11px; }
 .c .th .flags { position: absolute; left: 6px; top: 6px; display: flex; gap: 3px; }
 .c .th .flags span { background: #000a; color: #fff; border-radius: 4px; padding: 0 4px; font-size: 11px; }
