@@ -54,7 +54,8 @@ Firefox consulta `updates.json` una vez al día y se actualiza solo (`about:addo
 - **Como un explorador de archivos:** *Todos los paneles* muestra cada panel de Sidebery como una carpeta de su color, y las pestañas con hijas también son carpetas. Doble clic o `Intro` abre una carpeta o va a la pestaña; `Ctrl+Intro` va a la pestaña aunque tenga hijas. En *Detalles*, las carpetas se despliegan con ▸ (o `→`/`←`), y ⊞/⊟ despliegan o pliegan todo.
 - **Vistas:** *Detalles* (tabla con árbol desplegable), *Miniaturas* (cuadrícula con tamaño ajustable; los vídeos de YouTube muestran su vista previa) y *Grafo* (vínculos, etiquetas y árbol; arrastra, haz zoom con la rueda, doble clic abre).
 - **Barra lateral:** paneles de Sidebery con sus carpetas, Fijadas, Colecciones, Etiquetas (anidadas con `/`), Fichas y Archivo.
-- **Reorganizar:** arrastra pestañas a un panel, a una carpeta, entre dos filas, a las migas de pan o a una colección o etiqueta. Las hijas viajan con su madre, como en Sidebery. También `Ctrl+X` y `Ctrl+V`.
+- **Reorganizar:** arrastra pestañas a un panel, a una carpeta (quedan al final), entre dos filas, a las migas de pan o a una colección o etiqueta. En la barra lateral, sobre una carpeta: arriba la deja antes, en el centro dentro y abajo después. También se pueden arrastrar las carpetas del árbol. Las hijas viajan con su madre, como en Sidebery. También `Ctrl+X` y `Ctrl+V`. **`Ctrl+Z` deshace** (mover, cerrar, archivar, etiquetas, colecciones…). La ✕ de cada pestaña la cierra.
+- **Movimientos seguros:** Sidebery recalcula su árbol cada vez que otra extensión mueve una pestaña, y pasos intermedios mal ordenados le hacen meter pestañas dentro de otras o soltarlas. Antes de mover nada, Pestañario simula con la misma regla de Sidebery varias formas de hacerlo y solo ejecuta una que termine exactamente en lo pedido, sin tocar ninguna otra pestaña. Si no encuentra ninguna, no mueve nada y lo dice. Un caso nunca es posible desde fuera: llevar una carpeta con pestañas dentro a otro panel (Sidebery suelta sus hijas). Ese hazlo en Sidebery.
 - **Base de datos:** una pestaña pasa a ser **ficha** cuando le pones etiquetas, nota, color, nombre propio, un vínculo o una colección. Las fichas sobreviven al cierre: *Archivar* guarda y cierra; desde *Archivo* se reabren, incluso en el panel que elijas.
 - **Colecciones = accesos directos:** una pestaña puede estar en varias colecciones a la vez sin moverse de su panel. Arrastrar entre colecciones mueve; con `Ctrl`, copia. `Supr` dentro de una colección solo quita el acceso directo.
 - **Notas:** Markdown; `[[Título o dirección]]` enlaza otra pestaña y `#etiqueta` añade etiquetas. El panel de detalles muestra vínculos, menciones y quién la enlaza.
@@ -64,13 +65,14 @@ Firefox consulta `updates.json` una vez al día y se actualiza solo (`about:addo
 
 ### Atajos
 
-`Intro`/doble clic abrir la carpeta o ir a la pestaña · `Ctrl+Intro` ir a la pestaña · `*` desplegar todo · `Retroceso` subir · `Alt+←/→` atrás y adelante · `→/←` desplegar y plegar · `Supr` cerrar · `F2` renombrar · `T` etiquetar · `I` panel de detalles · `Ctrl+C` copiar direcciones · `Ctrl+X/V` mover · `Ctrl+A` todo · `/` o `Ctrl+F` buscar · `Ctrl+1/2/3` vistas · `Ctrl+B` barra lateral · clic central cierra.
+`Intro`/doble clic abrir la carpeta o ir a la pestaña · `Ctrl+Intro` ir a la pestaña · `*` desplegar todo · `Retroceso` subir · `Alt+←/→` atrás y adelante · `→/←` desplegar y plegar · `Supr` cerrar · `Ctrl+Z` deshacer · `F2` renombrar · `T` etiquetar · `I` panel de detalles · `Ctrl+C` copiar direcciones · `Ctrl+X/V` mover · `Ctrl+A` todo · `/` o `Ctrl+F` buscar · `Ctrl+1/2/3` vistas · `Ctrl+B` barra lateral · clic central cierra.
 
 ## Rendimiento
 
 - Sin dependencias ni frameworks; nada se compila.
 - El segundo plano es una página de eventos: solo despierta al cambiar de pestaña o de panel, y no hace nada más.
 - Las listas y cuadrículas solo dibujan lo que se ve. Con 3.000 pestañas: recarga completa en unos 55 ms, repintado en 7 ms y unos 6 ms por fotograma al desplazarse.
+- YouTube: la tarjeta muestra solo la vista previa, el título y el canal. El canal se pide una vez a YouTube (oEmbed) y se guarda; si Firefox lo bloquea, la barra de estado ofrece «Ver canales de YouTube: permitir» (permiso solo para youtube.com).
 - Vista previa de YouTube: es la imagen pública del vídeo (`i.ytimg.com`). No captura nada ni despierta la pestaña, y funciona también con las dormidas y las cerradas.
 - Las capturas de otras webs son opcionales: se capturan solo de la pestaña que miras (nunca despiertan pestañas dormidas), se guardan pequeñas y se cargan a medida que aparecen.
 - El grafo deja de calcular en cuanto se asienta.

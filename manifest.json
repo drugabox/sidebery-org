@@ -46,7 +46,8 @@
     "cookies"
   ],
   "optional_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "https://www.youtube.com/*"
   ],
   "commands": {
     "_execute_browser_action": {

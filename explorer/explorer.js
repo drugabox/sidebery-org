@@ -44,6 +44,8 @@ const S = {
   tabByUrl: new Map(), // url normalizada → elemento de pestaña
   tagCount: new Map(),
   titleIdx: new Map(),
+  favs: {},
+  yt: {},
   loc: { t: 'all' },
   hist: [],
   fwd: [],
@@ -115,17 +117,42 @@ function toast(msg, ms = 3500) {
 
 const favOk = u => !!u && /^(https?:|data:image|moz-extension:)/.test(u)
 
+// Icono de la pestaña: el suyo; si no lo trae (p. ej. dormida), el último visto de esa web;
+// si no, el favicon.ico de la web; y si tampoco existe, la inicial.
+function favSrc(it) {
+  if (favOk(it.fav)) return it.fav
+  if (it.domain && S.favs[it.domain]) return S.favs[it.domain]
+  if (/^https?:/.test(it.url || '')) {
+    try {
+      return new URL(it.url).origin + '/favicon.ico'
+    } catch {}
+  }
+  return ''
+}
+
 function favHtml(it, cls = 'fav') {
-  if (favOk(it.fav)) return `<img class="${cls}" src="${esc(it.fav)}" loading="lazy" alt="">`
-  const ch = (it.domain || it.title || '?').replace(/^www\./, '')[0] || '?'
-  return `<span class="${cls} ph" style="background:${hashColor(it.domain || it.title || '')}">${esc(ch.toUpperCase())}</span>`
+  const ch = ((it.domain || it.title || '?').replace(/^www\./, '')[0] || '?').toUpperCase()
+  const bg = hashColor(it.domain || it.title || '')
+  const src = favSrc(it)
+  if (src) return `<img class="${cls}" src="${esc(src)}" loading="lazy" alt="" data-letter="${esc(ch)}" data-bg="${esc(bg)}">`
+  return `<span class="${cls} ph" style="background:${bg}">${esc(ch)}</span>`
+}
+
+// Guardar el icono de cada web para usarlo en sus pestañas dormidas o cerradas
+const saveFavsSoon = debounce(() => browser.storage.local.set({ favs: S.favs }).catch(() => {}), 3000)
+function learnFav(it) {
+  if (!it.domain || !favOk(it.fav) || String(it.fav).length > 6000 || S.favs[it.domain] === it.fav) return
+  S.favs[it.domain] = it.fav
+  saveFavsSoon()
 }
 
 // ---------------------------------------------------------------------------
 // Ajustes
 
 async function loadSettings() {
-  const st = await browser.storage.local.get(['settings', 'sbImport', 'learned'])
+  const st = await browser.storage.local.get(['settings', 'sbImport', 'learned', 'favs', 'ytmeta'])
+  S.favs = st.favs || {}
+  S.yt = st.ytmeta || {}
   S.settings = { ...DEFAULTS, ...(st.settings || {}) }
   S.sbImport = st.sbImport || null
   S.learned = st.learned || {}
@@ -269,12 +296,64 @@ function fichaFor(key) {
   return S.fichas.get(key)
 }
 
+const ytTitle = (raw, id) => {
+  const t = ytClean(raw)
+  return t && !/youtube\.com\/|youtu\.be\//.test(t) ? t : (S.yt[id] || [])[0] || t
+}
+const ytClean = t => String(t || '').replace(/^\(\d+\)\s*/, '').replace(/\s*[-–]\s*YouTube\s*$/, '')
+
+// Canal y título de los vídeos de YouTube (oEmbed público de YouTube; se guarda)
+const ytQueue = new Set()
+let ytBusy = 0
+function ytMeta(id) {
+  if (!id) return null
+  if (S.yt[id]) return S.yt[id]
+  if (!S.ytBlocked) {
+    ytQueue.add(id)
+    ytPump()
+  }
+  return null
+}
+async function ytPump() {
+  while (ytBusy < 4 && ytQueue.size) {
+    const id = ytQueue.values().next().value
+    ytQueue.delete(id)
+    ytBusy++
+    fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent('https://www.youtube.com/watch?v=' + id)}`, { credentials: 'omit' })
+      .then(r => (r.ok ? r.json() : r.status === 401 || r.status === 404 ? { title: '', author_name: '' } : Promise.reject(r.status)))
+      .then(j => {
+        S.yt[id] = [j.title || '', j.author_name || '', Date.now()]
+        saveYtSoon()
+        ytChanged()
+      })
+      .catch(() => {
+        S.ytBlocked = true
+        ytQueue.clear()
+        renderStatus()
+      })
+      .finally(() => {
+        ytBusy--
+        ytPump()
+      })
+  }
+}
+const saveYtSoon = debounce(() => {
+  const keys = Object.keys(S.yt)
+  if (keys.length > 4000) for (const k of keys.sort((a, b) => S.yt[a][2] - S.yt[b][2]).slice(0, keys.length - 4000)) delete S.yt[k]
+  browser.storage.local.set({ ytmeta: S.yt }).catch(() => {})
+}, 2000)
+const ytChanged = debounce(() => {
+  buildItems()
+  renderMain()
+}, 150)
+
 function makeTabItem(i) {
   const t = i.tab
   const url = M.restoreUrl(t.url)
   const key = M.normUrl(t.url)
   const f = fichaFor(key)
   const isGroup = M.sideberyPage(t.url) === 'group'
+  const ytId = M.youtubeId(url)
   const ctr = S.containers.get(t.cookieStoreId)
   const tags = f ? [...new Set([...(f.tags || []), ...M.noteTags(f.note)])] : []
   return {
@@ -284,7 +363,9 @@ function makeTabItem(i) {
     win: i.win,
     url,
     nurl: key,
-    title: (f && f.alias) || (i.sb && i.sb.customTitle) || (isGroup ? M.groupName(t.url) || t.title : t.title) || url,
+    title: (f && f.alias) || (i.sb && i.sb.customTitle) || (isGroup ? M.groupName(t.url) || t.title : ytId ? ytTitle(t.title, ytId) : t.title) || url,
+    yt: ytId,
+    channel: ytId ? (S.yt[ytId] || [])[1] || '' : '',
     realTitle: t.title,
     customTitle: i.sb && i.sb.customTitle,
     fav: t.favIconUrl,
@@ -324,8 +405,10 @@ function makeFichaItem(f) {
     kind: 'ficha',
     url,
     nurl: f.url,
-    title: f.alias || f.title || url,
+    title: f.alias || (M.youtubeId(url) ? ytClean(f.title) : f.title) || url,
     realTitle: f.title,
+    yt: M.youtubeId(url),
+    channel: M.youtubeId(url) ? (S.yt[M.youtubeId(url)] || [])[1] || '' : '',
     fav: f.fav,
     domain: M.domainOf(url),
     panel: f.panel || '',
@@ -350,6 +433,7 @@ function buildItems() {
   for (const i of S.info.values()) {
     if (i.id === S.selfTabId || (i.tab.url || '').startsWith(SELF)) continue
     const it = makeTabItem(i)
+    learnFav(it)
     S.items.set(it.key, it)
     if (!S.tabByUrl.has(it.nurl)) S.tabByUrl.set(it.nurl, it)
   }
@@ -721,10 +805,10 @@ function renderCrumbs() {
 
 // --- Árbol lateral
 
-function tn({ loc, label, icon = '', count = '', lvl = 0, open = null, openKey = '', color = '', title = '' }) {
+function tn({ loc, label, icon = '', count = '', lvl = 0, open = null, openKey = '', color = '', title = '', key = '' }) {
   const cur = loc && sameLoc(loc, S.loc) ? ' cur' : ''
   const tw = open === null ? '<span class="tw"></span>' : `<span class="tw" data-tog="${esc(openKey)}">${chev(open)}</span>`
-  return `<div class="tn${cur}" style="padding-left:${6 + lvl * 14}px" data-loc='${esc(locKey(loc))}' data-drop-loc='${esc(locKey(loc))}' title="${esc(title || label)}">${tw}<span class="ti">${icon || (color ? `<span class="dot" style="background:${esc(color)}"></span>` : '')}</span><span class="tl">${esc(label)}</span>${count !== '' ? `<span class="tc">${count}</span>` : ''}</div>`
+  return `<div class="tn${cur}"${key ? ` data-key="${esc(key)}" draggable="true"` : ''} style="padding-left:${6 + lvl * 14}px" data-loc='${esc(locKey(loc))}' data-drop-loc='${esc(locKey(loc))}' title="${esc(title || label)}">${tw}<span class="ti">${icon || (color ? `<span class="dot" style="background:${esc(color)}"></span>` : '')}</span><span class="tl">${esc(label)}</span>${count !== '' ? `<span class="tc">${count}</span>` : ''}</div>`
 }
 
 function chev(open) {
@@ -782,7 +866,7 @@ function renderTree() {
       const ck = 'c' + c.id
       const open = S.treeOpen.has(ck)
       const n = fichaItemsIn(new Set([c.id])).length
-      h.push(tn({ loc: { t: 'col', id: c.id }, label: c.name, icon: folderSmall(c.color), count: n || '', lvl, open: kids.length ? open : null, openKey: ck }))
+      h.push(tn({ loc: { t: 'col', id: c.id }, label: c.name, icon: folderSmall(c.color), count: n || '', lvl, open: kids.length ? open : null, openKey: ck, key: 'c:' + c.id }))
       if (open) colRec(c.id, lvl + 1)
     }
   }
@@ -846,7 +930,7 @@ function treeFolder(h, it, lvl, anc = ancestorsOfLoc()) {
   const k = 't' + it.id
   const open = S.treeOpen.has(k) || (anc.has(it.id) && !S.treeOpen.has('-' + k))
   const sub = it.kids.map(tabItem).filter(c => c && c.kids.length)
-  h.push(tn({ loc: { t: 'folder', id: it.id }, label: it.title, icon: favHtml(it), count: it.kids.length, lvl, open: sub.length ? open : null, openKey: k, color: it.sbColor }))
+  h.push(tn({ loc: { t: 'folder', id: it.id }, label: it.title, icon: favHtml(it), count: it.kids.length, lvl, open: sub.length ? open : null, openKey: k, color: it.sbColor, key: it.key }))
   if (open) for (const c of sub) treeFolder(h, c, lvl + 1, anc)
 }
 
@@ -874,6 +958,7 @@ function renderMain() {
   }
   if (view === 'details') renderDetails()
   else renderIcons()
+  requestAnimationFrame(() => typeof updateBars === 'function' && updateBars())
 }
 
 function emptyText() {
@@ -939,9 +1024,9 @@ function rowHtml(r, i, tm) {
   let tw = '<span class="tw"></span>'
   if (tm && it.kind === 'tab' && it.kids.length) tw = `<span class="tw" data-exp="${it.id}">${chev(S.expanded.has(it.id))}</span>`
   if (tm && it.kind === 'panel') tw = `<span class="tw" data-expp="${esc(it.key)}">${chev(S.expandedP.has(it.key))}</span>`
+  if (it.yt) ytMeta(it.yt)
   let icon
   if (it.kind === 'col' || it.kind === 'panel' || it.kind === 'pinnedf') icon = folderSmall(it.kind === 'pinnedf' ? '' : it.color)
-  else if (it.kind === 'tab' && it.kids.length) icon = folderSmall(it.sbColor || it.color) + favHtml(it)
   else if (it.kind === 'tagdir') icon = '<span class="fav ph" style="background:none;color:var(--acc);font-size:14px">#</span>'
   else icon = favHtml(it)
   const badges = []
@@ -976,8 +1061,8 @@ function rowHtml(r, i, tm) {
   else if (it.kind === 'tagdir') st = (S.tagCount.get(it.tag) || 0) + ' elem.'
   const title = esc(it.title) + (it.customTitle && it.customTitle !== it.realTitle ? '' : '')
   return `<div class="${cls.join(' ')}" data-key="${esc(it.key)}" data-i="${i}" draggable="true" style="--lvl:${r.lvl};${stripe ? `border-left-color:${esc(stripe)}` : ''}" title="${esc(it.url || it.title)}">
-<div class="c0">${tw}${loadMark(it)}${icon}<span class="nm">${title}</span>${badges.join('')}</div>
-<div class="sub">${panel}</div><div>${tags}</div><div class="sub">${esc(it.domain || '')}</div><div class="sub">${it.kind === 'tab' || it.kind === 'ficha' ? ago(it.last) : ''}</div><div class="st">${st}</div></div>`
+<div class="c0">${tw}${loadMark(it)}${icon}<span class="nm">${title}</span>${badges.join('')}${it.kind === 'tab' ? `<span class="x" data-close="${esc(it.key)}" title="Cerrar">✕</span>` : ''}</div>
+<div class="sub">${panel}</div><div>${tags}</div><div class="sub">${esc(it.yt && it.channel ? it.channel : it.domain || '')}</div><div class="sub">${it.kind === 'tab' || it.kind === 'ficha' ? ago(it.last) : ''}</div><div class="st">${st}</div></div>`
 }
 
 // --- Miniaturas
@@ -985,7 +1070,7 @@ function rowHtml(r, i, tm) {
 function gridGeom() {
   const w = CARD[S.settings.zoom] || 200
   const gap = 12
-  const cardH = Math.round(w * 0.62) + 46 + gap
+  const cardH = Math.round(w * 0.62) + Math.round((S.settings.fontSize || 13) * 3.9) + 10 + gap
   const width = listEl().clientWidth - gap
   const cols = Math.max(1, Math.floor(width / (w + gap)))
   return { w, gap, cardH, cols }
@@ -1032,13 +1117,16 @@ function cardHtml(it, i) {
   let bg = ''
   if (it.kind === 'col' || it.kind === 'panel' || it.kind === 'pinnedf') th = folderBig(it.kind === 'pinnedf' ? '' : it.color, it.kind === 'pinnedf' ? '📌' : '', it.count)
   else if (it.kind === 'tagdir') th = `<span class="folder" style="color:var(--acc)">#</span>`
-  else if (it.kind === 'tab' && it.kids.length) th = folderBig(it.sbColor || it.color, favHtml(it), it.kids.length)
-  else {
-    const yt = M.youtubeId(it.url)
-    const t = yt ? null : thumbFor(it.nurl)
-    if (yt) bg = `background-image:${S.settings.zoom >= 3 ? `url('${M.youtubeThumb(yt, true)}'), ` : ''}url('${M.youtubeThumb(yt)}')`
-    else if (t) bg = `background-image:url('${t}')`
-    th = yt ? '<span class="play">▶</span>' : t ? '' : `<span class="big" style="background:${hashColor(it.domain || it.title || '')}">${favOk(it.fav) ? `<img src="${esc(it.fav)}" alt="">` : esc((it.domain || it.title || '?')[0].toUpperCase())}</span>`
+  else if (it.yt) {
+    // Vídeo de YouTube: solo la vista previa, el título y el canal
+    ytMeta(it.yt)
+    bg = `background-image:${S.settings.zoom >= 3 ? `url('${M.youtubeThumb(it.yt, true)}'), ` : ''}url('${M.youtubeThumb(it.yt)}')`
+    th = it.kids && it.kids.length ? `<span class="kids" title="Contiene ${it.kids.length} pestañas">📂 ${it.kids.length}</span>` : ''
+  } else {
+    const t = thumbFor(it.nurl)
+    if (t) bg = `background-image:url('${t}')`
+    th = t ? '' : `<span class="big" style="background:${hashColor(it.domain || it.title || '')}">${favHtml(it, 'bigfav')}</span>`
+    if (it.kind === 'tab' && it.kids.length) th += `<span class="kids" title="Contiene ${it.kids.length} pestañas">📂 ${it.kids.length}</span>`
     const fl = []
     if (it.kind === 'tab' || it.kind === 'ficha') fl.push(`<span class="ldw">${loadMark(it)}</span>`)
     if (it.pinned) fl.push('📌')
@@ -1049,8 +1137,8 @@ function cardHtml(it, i) {
   }
   const sbc = it.sbColor || it.color || ''
   return `<div class="${cls.join(' ')}" data-key="${esc(it.key)}" data-i="${i}" draggable="true" title="${esc((it.title || '') + (it.url ? '\n' + it.url : ''))}">
-<div class="th" style="${bg};${sbc ? `--sbc:${esc(sbc)}` : ''}">${th}</div>
-<div class="cap">${it.kind === 'tab' || it.kind === 'ficha' ? favHtml(it) : ''}<span class="nm">${esc(it.title)}</span></div></div>`
+<div class="th" style="${bg};${sbc ? `--sbc:${esc(sbc)}` : ''}">${th}${it.kind === 'tab' ? `<span class="cx" data-close="${esc(it.key)}" title="Cerrar">✕</span>` : ''}</div>
+${it.yt ? `<div class="cap yt"><span class="nm">${esc(it.title)}</span><span class="ch">${esc(it.channel || '')}</span></div>` : `<div class="cap">${it.kind === 'tab' || it.kind === 'ficha' ? favHtml(it) : ''}<span class="nm">${esc(it.title)}</span></div>`}</div>`
 }
 
 // Miniaturas guardadas (carga perezosa y caché limitada)
@@ -1107,6 +1195,7 @@ function renderStatus() {
   const imp = S.sbImport
   const parts = [`<span>${n} elementos${sel ? ` · ${sel} seleccionados` : ''}</span>`, '<span class="msg grow"></span>']
   if (imp) parts.push(`<span title="Datos importados de Sidebery">Sidebery: ${imp.panels.length} paneles · importado ${ago(imp.importedAt || imp.time)}</span>`)
+  if (S.ytBlocked) parts.push(`<span class="warn" data-act="ytperm" title="Para mostrar el canal de los vídeos">Ver canales de YouTube: permitir</span>`)
   if (unsure && S.panelOrder.length) parts.push(`<span class="warn" data-act="setup" title="Pestañas cuyo panel se deduce por posición">${unsure} sin confirmar</span>`)
   $('#status').innerHTML = parts.join('')
 }
@@ -1283,12 +1372,14 @@ function emptyFicha(f) {
   return !(f.tags && f.tags.length) && !f.note && !f.color && !(f.links && f.links.length) && !(f.cols && f.cols.length) && !f.keep && !f.alias
 }
 
-async function editFichas(items, fn) {
+async function editFichas(items, fn, opts = {}) {
   const puts = []
   const dels = []
+  const prev = new Map()
   for (const it of items) {
     if (!it || !(it.kind === 'tab' || it.kind === 'ficha')) continue
     const old = S.fichas.get(it.nurl)
+    if (!prev.has(it.nurl)) prev.set(it.nurl, old ? JSON.parse(JSON.stringify(old)) : null)
     const f = old ? { ...old, tags: [...(old.tags || [])], links: [...(old.links || [])], cols: [...(old.cols || [])] } : { url: it.nurl, tags: [], note: '', color: '', links: [], cols: [], created: Date.now() }
     fn(f, it)
     if (it.kind === 'tab') {
@@ -1311,12 +1402,25 @@ async function editFichas(items, fn) {
   }
   if (puts.length) await DB.putMany('fichas', puts)
   for (const u of dels) await DB.del('fichas', u)
+  if (opts.undo !== false && prev.size) {
+    pushUndo(opts.label || 'cambio', async () => {
+      for (const [url, f] of prev) {
+        if (f) await DB.put('fichas', f)
+        else await DB.del('fichas', url)
+      }
+    })
+  }
   bc.postMessage({ type: 'db' })
   buildItems()
   render()
 }
 
 async function saveCol(c) {
+  const old = S.cols.get(c.id)
+  pushUndo('colección', async () => {
+    if (old) await DB.put('cols', old)
+    else await DB.del('cols', c.id)
+  })
   S.cols.set(c.id, c)
   await DB.put('cols', c)
   bc.postMessage({ type: 'db' })
@@ -1345,11 +1449,15 @@ async function deleteCol(id) {
   const ids = colDescendants(id)
   const affected = [...S.fichas.values()].filter(f => (f.cols || []).some(c => ids.has(c))).map(f => itemForUrl(f.url))
   if (!(await confirmDlg(`¿Eliminar la colección «${S.cols.get(id).name}» y sus subcolecciones? Las pestañas y fichas no se borran.`))) return
-  for (const c of ids) {
-    S.cols.delete(c)
-    await DB.del('cols', c)
-  }
-  await editFichas(affected, f => (f.cols = f.cols.filter(c => !ids.has(c))))
+  await grouped('eliminar colección', async () => {
+    const removed = [...ids].map(c => S.cols.get(c)).filter(Boolean)
+    pushUndo('', async () => DB.putMany('cols', removed))
+    for (const c of ids) {
+      S.cols.delete(c)
+      await DB.del('cols', c)
+    }
+    await editFichas(affected, f => (f.cols = f.cols.filter(c => !ids.has(c))))
+  })
   if (S.loc.t === 'col' && ids.has(S.loc.id)) go({ t: 'cols' })
 }
 
@@ -1415,7 +1523,7 @@ async function reopen(items, panel = null, win = null) {
     // Sidebery coloca las pestañas nuevas a su manera; después se llevan al panel pedido.
     await new Promise(r => setTimeout(r, 400))
     await refresh()
-    await moveTabs(created, { panel, win: win || (S.wins.find(w => w.focused) || S.wins[0]).id, end: true })
+    await moveTabs(created, { panel, win: win || (S.wins.find(w => w.focused) || S.wins[0]).id, end: true }, { noUndo: true })
   }
 }
 
@@ -1439,115 +1547,160 @@ function descendants(id, acc = []) {
   return acc
 }
 
-// Mover pestañas (con sus hijas) de forma que Sidebery lo refleje.
-// target: { win, panel, end } | { after: id } | { before: id } | { into: id }
-async function moveTabs(ids, target) {
-  let anchor
-  let win
-  let panel
-  if (target.end) {
-    win = target.win
-    panel = target.panel
-    const last = lastOfPanel(win, panel)
-    if (!last) {
-      toast('Ese panel está vacío en esta ventana: Sidebery no deja meter pestañas desde fuera en un panel vacío. Abre una pestaña en él primero.', 7000)
-      return false
-    }
-    anchor = { after: last.id }
-    const extra = descendants(last.id)
-    if (extra.length) anchor = { after: extra[extra.length - 1] }
-  } else if (target.into !== undefined) {
-    const i = S.info.get(target.into)
-    win = i.win
-    panel = i.panel
-    if (i.kids.length) anchor = { after: target.into }
-    else {
-      const d = descendants(target.into)
-      anchor = { after: d.length ? d[d.length - 1] : target.into }
-    }
-  } else {
-    const ref = target.after !== undefined ? target.after : target.before
-    const i = S.info.get(ref)
-    win = i.win
-    panel = i.panel
-    if (target.after !== undefined) {
-      const d = descendants(ref)
-      anchor = { after: d.length ? d[d.length - 1] : ref }
-    } else anchor = { before: ref }
-  }
+// Estado de una ventana tal como lo tiene Sidebery: [{id, panel, parent, pinned}] en orden
+function winState(win) {
+  return [...S.info.values()]
+    .filter(i => i.win === win)
+    .sort((a, b) => a.tab.index - b.tab.index)
+    .map(i => ({ id: i.id, panel: i.panel, parent: i.parent, pinned: !!i.tab.pinned }))
+}
 
-  // Conjunto a mover: las elegidas y sus hijas, en orden
-  const set = new Set()
-  for (const id of ids) {
-    const i = S.info.get(id)
-    if (!i || i.tab.pinned) continue
-    set.add(id)
-    for (const d of descendants(id)) set.add(d)
+const MOVE_ERRORS = {
+  empty: 'Ese panel está vacío en esta ventana: Sidebery no deja meter pestañas desde fuera en un panel vacío. Abre una pestaña en él primero.',
+  self: 'No se puede mover una carpeta dentro de sí misma.',
+  'folder-panel': 'Las carpetas con pestañas dentro no se pueden pasar a otro panel desde fuera de Sidebery: Sidebery soltaría sus pestañas. Hazlo en Sidebery (clic derecho → «Move to panel»). No he movido nada.',
+  unsafe: 'No encuentro una forma de hacer este movimiento sin que Sidebery desordene el árbol, así que no he movido nada. Prueba a soltarla en otro sitio o hazlo en Sidebery.',
+  changed: 'Las pestañas han cambiado desde entonces; no se puede deshacer con seguridad.',
+  window: 'Mover entre ventanas hazlo desde Sidebery.',
+}
+
+// Ejecuta movimientos [id, ocupante] (el sitio de la pestaña «ocupante») y deja a Sidebery y a
+// Pestañario de acuerdo: openerTabId = madre que Sidebery tendrá; panel aprendido de lo movido.
+async function execPlan(win, before, moves, desired) {
+  for (const [id, occ] of moves) {
+    const o = await browser.tabs.get(occ)
+    await browser.tabs.move(id, { index: o.index })
   }
-  const anchorId = anchor.after ?? anchor.before
-  if (set.has(anchorId)) {
-    toast('No se puede mover una carpeta dentro de sí misma.')
+  const was = new Map(before.map(x => [x.id, x]))
+  const now = Date.now()
+  for (const d of desired) {
+    const b = was.get(d.id)
+    if (!b || d.pinned) continue
+    if (b.parent !== d.parent) browser.tabs.update(d.id, { openerTabId: d.parent === -1 ? d.id : d.parent }).catch(() => {})
+    if (b.panel !== d.panel && d.panel) {
+      S.learned[d.id] = [d.panel, now]
+      browser.sessions.setTabValue(d.id, 'sbp', S.learned[d.id]).catch(() => {})
+    }
+  }
+  await browser.storage.local.set({ learned: S.learned })
+  void win
+}
+
+// Mover pestañas (con sus hijas) de forma que Sidebery lo refleje igual, sin desordenar nada.
+// target: { win, panel, end } | { after: id } | { before: id } | { into: id } (al final)
+async function moveTabs(ids, target, opts = {}) {
+  const ref = target.into ?? target.after ?? target.before
+  const win = target.end ? target.win : S.info.get(ref)?.win
+  if (win === undefined) return false
+  if (ids.some(id => S.info.get(id) && S.info.get(id).win !== win)) {
+    toast(MOVE_ERRORS.window, 7000)
     return false
   }
-  const order = [...set].sort((a, b) => S.info.get(a).win - S.info.get(b).win || S.info.get(a).tab.index - S.info.get(b).tab.index)
-  if (!order.length) return false
-
-  const panelOf = new Map([...S.info.values()].map(i => [i.id, i.panel]))
-  const learnedUpd = {}
-  try {
-    for (const id of order) {
-      const tab = S.info.get(id).tab
-      if (tab.windowId !== win) {
-        const a = await browser.tabs.get(anchorId)
-        await browser.tabs.move(id, { windowId: win, index: a.index })
-      }
-      const live = (await browser.tabs.query({ windowId: win })).sort((a, b) => a.index - b.index)
-      const list = live.map(t => ({ id: t.id, panel: panelOf.get(t.id) ?? '' }))
-      for (const f of M.planMove(list, id, anchor)) {
-        const from = list.findIndex(x => x.id === id)
-        if (from === f) continue
-        await browser.tabs.move(id, { index: f })
-        M.applyMove(list, from, f)
-      }
-      panelOf.set(id, panel)
-      learnedUpd[id] = [panel, Date.now()]
-      anchor = { after: id }
-    }
-  } catch (e) {
-    toast('No se pudo mover: ' + e.message)
+  const before = winState(win)
+  const t = target.end ? { panelEnd: target.panel } : target.into !== undefined ? { into: target.into } : target.after !== undefined ? { after: target.after } : { before: target.before }
+  toast('Calculando un movimiento seguro…', 4000)
+  await new Promise(r => setTimeout(r, 20))
+  const plan = M.planMoveOp(before, ids, t)
+  if (plan.error) {
+    toast(MOVE_ERRORS[plan.error] || 'No se pudo mover.', 9000)
+    return false
   }
-
-  // Lo movido pasa a ese panel (para no deducirlo mal después)
-  if (panel) {
-    Object.assign(S.learned, learnedUpd)
-    for (const [id, v] of Object.entries(learnedUpd)) browser.sessions.setTabValue(+id, 'sbp', v).catch(() => {})
-    await browser.storage.local.set({ learned: S.learned })
+  if (!plan.moves.length) {
+    toast('Ya está ahí.')
+    return true
+  }
+  try {
+    await execPlan(win, before, plan.moves, plan.desired)
+  } catch (e) {
+    toast('No se pudo mover: ' + e.message, 7000)
+  }
+  if (!opts.noUndo) {
+    pushUndo('mover', async () => {
+      await refresh()
+      const cur = winState(win)
+      const back = M.planRestore(cur, before)
+      if (back.error) return toast(MOVE_ERRORS[back.error] || 'No se pudo deshacer.', 7000)
+      await execPlan(win, cur, back.moves, before)
+    })
   }
   await refresh()
-  // Igualar openerTabId al árbol que Sidebery calcula, para que las dos vistas coincidan
-  for (const id of order) {
-    const i = S.info.get(id)
-    if (!i) continue
-    browser.tabs.update(id, { openerTabId: i.parent === -1 ? id : i.parent }).catch(() => {})
-  }
-  toast(`${order.length} pestaña${order.length > 1 ? 's' : ''} → ${panelLabel(panel)}`)
+  const n = new Set(plan.desired.filter(d => before.find(b => b.id === d.id)?.panel !== d.panel || ids.includes(d.id)).map(d => d.id)).size
+  toast(`Movido${n > 1 ? 's' : ''}. Ctrl+Z deshace.`)
   return true
+}
+
+// ---------------------------------------------------------------------------
+// Deshacer (Ctrl+Z)
+
+const undoStack = []
+let undoGroup = null
+
+function pushUndo(label, fn) {
+  if (undoGroup) undoGroup.push(fn)
+  else {
+    undoStack.push({ label, fns: [fn] })
+    if (undoStack.length > 50) undoStack.shift()
+  }
+}
+
+async function grouped(label, fn) {
+  const outer = undoGroup
+  if (!outer) undoGroup = []
+  try {
+    return await fn()
+  } finally {
+    if (!outer) {
+      const fns = undoGroup
+      undoGroup = null
+      if (fns.length) undoStack.push({ label, fns })
+    }
+  }
+}
+
+async function undo() {
+  const u = undoStack.pop()
+  if (!u) return toast('Nada que deshacer')
+  for (const fn of [...u.fns].reverse()) await fn()
+  await loadDb()
+  buildItems()
+  await refresh()
+  toast(`Deshecho: ${u.label}`)
 }
 
 async function closeTabs(items) {
   const ids = items.filter(i => i.kind === 'tab').map(i => i.id)
   if (!ids.length) return
   if (ids.length > 15 && !(await confirmDlg(`¿Cerrar ${ids.length} pestañas?`))) return
+  const urls = items.filter(i => i.kind === 'tab').map(i => S.info.get(i.id)?.tab.url)
   await browser.tabs.remove(ids)
-  toast(`${ids.length} cerradas. Ctrl+Mayús+T en Firefox las recupera.`)
+  pushUndo('cerrar', () => restoreClosed(urls))
+  toast(`${ids.length} cerrada${ids.length > 1 ? 's' : ''}. Ctrl+Z las recupera.`)
+}
+
+// Reabre esas pestañas cerradas (Firefox y Sidebery las devuelven a su sitio y a su carpeta)
+async function restoreClosed(urls) {
+  const left = [...urls]
+  const recent = await browser.sessions.getRecentlyClosed({ maxResults: 25 })
+  const pick = []
+  for (const r of recent) {
+    const i = r.tab ? left.indexOf(r.tab.url) : -1
+    if (i < 0) continue
+    left.splice(i, 1)
+    pick.push(r.tab.sessionId)
+  }
+  for (const id of pick.reverse()) await browser.sessions.restore(id).catch(() => {})
 }
 
 async function archiveTabs(items) {
   const tabs = items.filter(i => i.kind === 'tab')
   if (!tabs.length) return
-  await editFichas(tabs, f => (f.keep = true))
-  await browser.tabs.remove(tabs.map(t => t.id))
-  toast(`${tabs.length} archivadas en «Archivo».`)
+  await grouped('archivar', async () => {
+    await editFichas(tabs, f => (f.keep = true))
+    const urls = tabs.map(t => S.info.get(t.id)?.tab.url)
+    await browser.tabs.remove(tabs.map(t => t.id))
+    pushUndo('', () => restoreClosed(urls))
+  })
+  toast(`${tabs.length} archivada${tabs.length > 1 ? 's' : ''} en «Archivo». Ctrl+Z deshace.`)
 }
 
 async function discardTabs(items) {
@@ -1566,6 +1719,8 @@ async function deleteFichas(items) {
   const list = items.filter(i => i.kind === 'ficha' || (i.kind === 'tab' && S.fichas.has(i.nurl)))
   if (!list.length) return
   if (!(await confirmDlg(`¿Borrar ${list.length} ficha(s) con sus etiquetas, notas y vínculos? Las pestañas abiertas no se cierran.`))) return
+  const removed = list.map(it => S.fichas.get(it.nurl)).filter(Boolean)
+  pushUndo('borrar fichas', () => DB.putMany('fichas', removed))
   for (const it of list) {
     S.fichas.delete(it.nurl)
     await DB.del('fichas', it.nurl)
@@ -1896,6 +2051,9 @@ document.addEventListener('keydown', async e => {
       case 'v':
         e.preventDefault()
         return pasteInto(S.loc)
+      case 'z':
+        e.preventDefault()
+        return undo()
     }
   }
 })
@@ -1953,6 +2111,14 @@ const renderMainSoon = (() => {
 
 listEl().addEventListener('mousedown', e => {
   if (e.button !== 0) return
+  const cl = e.target.closest('[data-close]')
+  if (cl) {
+    e.preventDefault()
+    e.stopPropagation()
+    const it = S.items.get(cl.dataset.close)
+    if (it) closeTabs(S.sel.has(it.key) && S.sel.size > 1 ? selectedItems() : [it])
+    return
+  }
   const expp = e.target.closest('[data-expp]')
   if (expp) {
     const k = expp.dataset.expp
@@ -1995,7 +2161,7 @@ listEl().addEventListener('click', e => {
 
 listEl().addEventListener('dblclick', e => {
   const key = listClickKey(e)
-  if (!key || e.target.closest('[data-exp], [data-expp]')) return
+  if (!key || e.target.closest('[data-exp], [data-expp], [data-close]')) return
   openItem(S.items.get(key), { enter: true })
 })
 
@@ -2062,8 +2228,16 @@ $('#tree').addEventListener('contextmenu', e => {
   showLocMenu(e.clientX, e.clientY, JSON.parse(n.dataset.loc))
 })
 
-$('#status').addEventListener('click', e => {
+$('#status').addEventListener('click', async e => {
   if (e.target.closest('[data-act="setup"]')) openSettings('sidebery')
+  if (e.target.closest('[data-act="ytperm"]')) {
+    const ok = await browser.permissions.request({ origins: ['https://www.youtube.com/*'] })
+    if (ok) {
+      S.ytBlocked = false
+      renderStatus()
+      renderMain()
+    }
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -2071,7 +2245,15 @@ $('#status').addEventListener('click', e => {
 
 document.addEventListener('error', e => {
   const img = e.target
-  if (img.tagName === 'IMG' && img.dataset.fallback && img.src !== img.dataset.fallback) img.src = img.dataset.fallback
+  if (img.tagName !== 'IMG') return
+  if (img.dataset.fallback && img.src !== img.dataset.fallback) img.src = img.dataset.fallback
+  else if (img.dataset.letter) {
+    const span = document.createElement('span')
+    span.className = img.className + ' ph'
+    span.style.background = img.dataset.bg
+    span.textContent = img.dataset.letter
+    img.replaceWith(span)
+  }
 }, true)
 
 $('#inspector').addEventListener('click', async e => {
@@ -2187,7 +2369,7 @@ $('#inspector').addEventListener('change', e => {
 
 const saveNoteSoon = debounce((it, text) => {
   if (!it) return
-  editFichas([it], f => (f.note = text))
+  editFichas([it], f => (f.note = text), { undo: false })
 }, 600)
 
 // ---------------------------------------------------------------------------
@@ -2419,6 +2601,16 @@ function dropTarget(e) {
     const loc = JSON.parse(locEl.dataset.dropLoc)
     const t = locTarget(loc)
     if (!t) return null
+    // Carpeta del árbol: arriba = antes, centro = dentro (al final), abajo = después
+    if (loc.t === 'folder' && locEl.classList.contains('tn')) {
+      if (dragKeys.includes('t:' + loc.id)) return null
+      if (!items.some(i => i.kind === 'tab' || i.kind === 'ficha')) return null
+      const r = locEl.getBoundingClientRect()
+      const f = (e.clientY - r.top) / r.height
+      if (f < 0.28) return { el: locEl, cls: 'drop-before', target: { kind: 'before', id: loc.id } }
+      if (f > 0.72) return { el: locEl, cls: 'drop-after', target: { kind: 'after', id: loc.id } }
+      return { el: locEl, cls: 'drop-into', target: t }
+    }
     if (t.kind === 'into' && dragKeys.includes('t:' + t.id)) return null
     if (t.kind === 'panel' && !items.some(i => i.kind === 'tab' || i.kind === 'ficha')) return null
     return { el: locEl, cls: 'drop', target: t }
@@ -2560,7 +2752,7 @@ async function openSettings(section) {
 <p class="small">
 <code>Intro</code> o doble clic: abrir la carpeta o ir a la pestaña · <code>Ctrl+Intro</code> ir a la pestaña aunque tenga hijas · <code>*</code> desplegar todo · <code>Retroceso</code> subir · <code>Alt+←/→</code> atrás/adelante ·
 <code>→/←</code> desplegar/plegar · <code>Supr</code> cerrar (en colecciones: quitar el acceso directo) · <code>F2</code> renombrar · <code>T</code> etiquetas · <code>I</code> panel de detalles ·
-<code>Ctrl+X</code> / <code>Ctrl+V</code> cortar y pegar en otro panel/carpeta/colección · <code>Ctrl+C</code> copiar direcciones · <code>Ctrl+A</code> todo · <code>/</code> o <code>Ctrl+F</code> buscar · <code>Ctrl+1/2/3</code> vistas · <code>Ctrl+B</code> barra lateral · clic central cierra.
+<code>Ctrl+X</code> / <code>Ctrl+V</code> cortar y pegar en otro panel/carpeta/colección · <code>Ctrl+Z</code> deshacer · <code>Ctrl+C</code> copiar direcciones · <code>Ctrl+A</code> todo · <code>/</code> o <code>Ctrl+F</code> buscar · <code>Ctrl+1/2/3</code> vistas · <code>Ctrl+B</code> barra lateral · clic central cierra.
 Al arrastrar a una colección, <code>Ctrl</code> copia en vez de mover entre colecciones.</p>
 <p class="small">Búsqueda: texto, <code>#etiqueta</code>, <code>panel:trabajo</code>, <code>site:youtube</code>, <code>color:red</code>, <code>en:colección</code>, <code>es:abierta|cerrada|dormida|sonando|fijada|ficha|nota</code>; «-» delante niega.</p>
 <div class="foot"><button id="btnClose" class="primary">Cerrar</button></div>`
@@ -2866,6 +3058,64 @@ const saveWinBounds = debounce(async () => {
   const w = await browser.windows.getCurrent()
   if (w.type === 'popup') browser.storage.local.set({ winBounds: { width: w.width, height: w.height, left: w.left, top: w.top } })
 }, 500)
+
+// ---------------------------------------------------------------------------
+// Barras de desplazamiento siempre visibles (las del sistema pueden ocultarse solas)
+
+function attachBar(el) {
+  const bar = document.createElement('div')
+  bar.className = 'vbar'
+  const th = document.createElement('div')
+  th.className = 'vthumb'
+  bar.appendChild(th)
+  document.body.appendChild(bar)
+  let h = 0
+  const update = () => {
+    const r = el.getBoundingClientRect()
+    const sh = el.scrollHeight
+    const ch = el.clientHeight
+    if (el.hidden || !r.width || el.offsetParent === null || sh <= ch + 1) {
+      bar.hidden = true
+      return
+    }
+    bar.hidden = false
+    bar.style.top = r.top + 'px'
+    bar.style.left = r.right - 11 + 'px'
+    bar.style.height = ch + 'px'
+    h = Math.max(28, (ch * ch) / sh)
+    th.style.height = h + 'px'
+    th.style.transform = `translateY(${((ch - h) * el.scrollTop) / (sh - ch)}px)`
+  }
+  el.addEventListener('scroll', update, { passive: true })
+  th.addEventListener('mousedown', e => {
+    e.preventDefault()
+    e.stopPropagation()
+    const y0 = e.clientY
+    const top0 = el.scrollTop
+    const move = ev => {
+      const ch = el.clientHeight
+      el.scrollTop = top0 + ((ev.clientY - y0) * (el.scrollHeight - ch)) / Math.max(1, ch - h)
+    }
+    const up = () => {
+      removeEventListener('mousemove', move)
+      removeEventListener('mouseup', up)
+      bar.classList.remove('drag')
+    }
+    bar.classList.add('drag')
+    addEventListener('mousemove', move)
+    addEventListener('mouseup', up)
+  })
+  bar.addEventListener('mousedown', e => {
+    if (e.target !== bar) return
+    const r = th.getBoundingClientRect()
+    el.scrollTop += (e.clientY < r.top ? -1 : 1) * el.clientHeight * 0.9
+  })
+  new ResizeObserver(update).observe(el)
+  return update
+}
+
+const bars = [attachBar(listEl()), attachBar($('#side')), attachBar($('#inspector'))]
+const updateBars = () => bars.forEach(f => f())
 
 // ---------------------------------------------------------------------------
 // Cambios de fuera: pestañas, ajustes, otras ventanas del explorador

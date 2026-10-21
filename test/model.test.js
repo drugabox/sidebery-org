@@ -209,3 +209,123 @@ test('computeTree: soltar sobre una carpeta (justo detrás de ella) la deja dent
   assert.deepEqual(n.get(9), { parent: 1, lvl: 1 })
   assert.deepEqual(n.get(3), { parent: -1, lvl: 0 })
 })
+
+// ---------------------------------------------------------------------------
+// Planificador de movimientos seguros (simula a Sidebery)
+
+// Construye un estado a partir de líneas «panel:nivel:id»
+function st(spec) {
+  const list = []
+  const stack = []
+  for (const s of spec.trim().split(/\s+/)) {
+    const [panel, lvl, id] = s.split(':')
+    const L = +lvl
+    while (stack.length > L) stack.pop()
+    const parent = L ? stack[L - 1] : -1
+    list.push({ id: +id, panel, parent, pinned: false })
+    stack[L] = +id
+    stack.length = L + 1
+  }
+  return list
+}
+
+function runPlan(state, ids, target) {
+  const r = M.arrangeMove(state, ids, target)
+  assert.ok(!r.error, r.error)
+  const plan = M.planMoveOp(state, ids, target)
+  assert.ok(!plan.error, 'no encuentra una secuencia segura')
+  const list = state.map(x => ({ ...x }))
+  M.applyPlan(list, plan.moves)
+  assert.ok(M.sameState(list, r.desired), 'el resultado no es el pedido')
+  return { list, plan }
+}
+
+const show = l => l.map(x => `${x.panel}${x.id}${x.parent === -1 ? '' : '<' + x.parent}`).join(' ')
+
+test('mover pestaña a pestaña sin planificar rompe el árbol de Sidebery', () => {
+  // Carpeta 1 (con 2 y su hija 3) hacia atrás, delante de 5: lo ingenuo adopta lo de en medio
+  const s = st('A:0:5 A:0:6 A:0:1 A:1:2 A:2:3')
+  const naive = s.map(x => ({ ...x }))
+  for (const [id, to] of [[1, 0], [2, 1], [3, 2]]) M.sbMove(naive, id, to)
+  // tras mover la 1 delante, la 2 queda separada de su madre y la 5 y la 6 acaban dentro de la 1
+  assert.notEqual(show(naive), 'A1 A2<1 A3<2 A5 A6')
+  const { list } = runPlan(s, [1], { before: 5 })
+  assert.equal(show(list), 'A1 A2<1 A3<2 A5 A6')
+})
+
+test('varias carpetas dentro de otra: al final y conservando sus árboles', () => {
+  const s = st('A:0:1 A:1:2 A:0:10 A:1:11 A:2:12 A:0:20 A:1:21 A:0:30')
+  const { list } = runPlan(s, [10, 20], { into: 1 })
+  assert.equal(show(list), 'A1 A2<1 A10<1 A11<10 A12<11 A20<1 A21<20 A30')
+})
+
+test('a otro panel: las pestañas sí; las carpetas con hijas se niegan (Sidebery las desharía)', () => {
+  const s = st('A:0:1 A:1:2 A:2:3 A:0:4 B:0:5 B:1:6 B:0:7 C:0:8')
+  assert.equal(show(runPlan(s, [4], { panelEnd: 'B' }).list), 'A1 A2<1 A3<2 B5 B6<5 B7 B4 C8')
+  assert.equal(show(runPlan(s, [7, 8], { before: 1 }).list), 'A7 A8 A1 A2<1 A3<2 A4 B5 B6<5')
+  assert.equal(show(runPlan(s, [8], { into: 5 }).list), 'A1 A2<1 A3<2 A4 B5 B6<5 B8<5 B7')
+  assert.equal(M.planMoveOp(s, [1], { panelEnd: 'B' }).error, 'folder-panel')
+})
+
+test('una hija suelta a la raíz y una raíz dentro de una carpeta (al final)', () => {
+  const s = st('A:0:1 A:1:2 A:1:3 A:0:4 A:0:5')
+  assert.equal(show(runPlan(s, [2], { after: 5 }).list), 'A1 A3<1 A4 A5 A2')
+  assert.equal(show(runPlan(s, [5], { into: 1 }).list), 'A1 A2<1 A3<1 A5<1 A4')
+  assert.equal(show(runPlan(s, [4], { before: 3 }).list), 'A1 A2<1 A4<1 A3<1 A5')
+})
+
+test('miles de movimientos al azar: o acaba exactamente como se pidió o no se mueve nada', () => {
+  let seed = 7
+  const rnd = n => ((seed = (seed * 1103515245 + 12345) % 2147483648), Math.floor(seed / 65536) % n)
+  let ok = 0
+  let refused = 0
+  for (let round = 0; round < 3000; round++) {
+    const parts = []
+    let id = 1
+    for (const p of ['A', 'B', 'C']) {
+      let lvl = 0
+      const n = 1 + rnd(7)
+      for (let i = 0; i < n; i++) {
+        parts.push(`${p}:${lvl}:${id++}`)
+        lvl = rnd(3) === 0 ? 0 : Math.min(lvl + rnd(2), 3)
+        if (rnd(2)) lvl = Math.max(0, lvl - rnd(3))
+      }
+    }
+    const s = st(parts.join(' '))
+    const pick = () => s[rnd(s.length)].id
+    const ids = [pick()]
+    if (rnd(2)) ids.push(pick())
+    const kinds = ['panelEnd', 'into', 'after', 'before']
+    const k = kinds[rnd(4)]
+    const target = k === 'panelEnd' ? { panelEnd: ['A', 'B', 'C'][rnd(3)] } : { [k]: pick() }
+    if (k === 'into' && !s.some(x => x.parent === target.into)) continue
+    const r = M.arrangeMove(s, ids, target)
+    if (r.error) continue
+    const plan = M.planMoveOp(s, ids, target)
+    if (plan.error) {
+      const byId = new Map(s.map(x => [x.id, x]))
+      const panel = r.desired.find(x => x.id === r.tops[0].id).panel
+      const folderToOtherPanel = r.tops.some(t => byId.get(t.id).panel !== panel && s.some(x => x.parent === t.id))
+      assert.ok(folderToOtherPanel, `ronda ${round}: rechazado sin motivo: ${show(s)} | ${JSON.stringify(ids)} ${JSON.stringify(target)} → ${show(r.desired)}`)
+      refused++
+      continue
+    }
+    const list = s.map(x => ({ ...x }))
+    M.applyPlan(list, plan.moves)
+    assert.ok(M.sameState(list, r.desired), `ronda ${round}`)
+    ok++
+  }
+  console.log(`    planificados: ${ok}, rechazados (carpetas con hijas a otro panel): ${refused}`)
+  assert.ok(ok > refused * 4)
+})
+
+test('deshacer: vuelve exactamente al estado anterior', () => {
+  const s = st('A:0:1 A:1:2 A:2:3 A:0:4 A:0:5 A:1:6 A:0:7 B:0:8')
+  for (const [ids, target] of [[[1], { into: 5 }], [[4], { panelEnd: 'B' }], [[5], { before: 1 }]]) {
+    const { list } = runPlan(s, ids, target)
+    const back = M.planRestore(list, s)
+    assert.ok(!back.error, back.error)
+    M.applyPlan(list, back.moves)
+    assert.equal(show(list), show(s))
+  }
+})
