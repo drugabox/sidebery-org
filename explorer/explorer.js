@@ -5,6 +5,48 @@ const M = Model
 const SELF = browser.runtime.getURL('explorer/explorer.html')
 const bc = new BroadcastChannel('pestanario')
 const $ = s => document.querySelector(s)
+
+// Cambiar el HTML solo si ha cambiado: rehacerlo recarga iconos e imágenes y
+// se ve un parpadeo
+function setHtml(el, html) {
+  if (el._html === html) return
+  el._html = html
+  el.innerHTML = html
+}
+
+// Pinta una lista de elementos reutilizando los que no han cambiado. Cada parte
+// es [clave, html de un único elemento]; si solo cambia la clase (selección,
+// foco) se cambia la clase sin rehacer el elemento. `old` son los elementos
+// reutilizables por clave; lo que sobra al final de `parent` se quita.
+const tplEl = document.createElement('template')
+function keyedEls(els) {
+  const m = new Map()
+  for (const el of els) if (el._k != null && !m.has(el._k)) m.set(el._k, el)
+  return m
+}
+function placeEls(parent, parts, old) {
+  let prev = null
+  for (const [k, html] of parts) {
+    const m = /^<div class="([^"]*)"/.exec(html)
+    const body = (m ? html.slice(m[0].length) : html).replace(/ data-i="\d+"/, '')
+    let el = old.get(k)
+    if (el && el._body === body) {
+      old.delete(k)
+      if (m && el.className !== m[1]) el.className = m[1]
+      const i = / data-i="(\d+)"/.exec(html)
+      if (i && el.dataset.i !== i[1]) el.dataset.i = i[1]
+    } else {
+      tplEl.innerHTML = html
+      el = tplEl.content.firstElementChild
+      el._k = k
+      el._body = body
+    }
+    const next = prev ? prev.nextSibling : parent.firstChild
+    if (next !== el) parent.insertBefore(el, next)
+    prev = el
+  }
+  while (prev ? prev.nextSibling : parent.firstChild) (prev ? prev.nextSibling : parent.firstChild).remove()
+}
 const DEFAULTS = {
   prefaceRe: '⟦(.+?)⟧',
   hideInact: false,
@@ -807,9 +849,10 @@ const renderSoon = (() => {
 
 function renderCrumbs() {
   const parts = crumbsOf(S.loc)
-  $('#crumbs').innerHTML = parts
+  setHtml($('#crumbs'), parts
     .map((p, i) => `${i ? '<span class="sep">›</span>' : ''}<a data-i="${i}" ${p.loc ? `data-drop-loc='${esc(locKey(p.loc))}'` : ''}>${esc(p.label)}</a>`)
     .join('')
+  )
   $('#crumbs').onclick = e => {
     const a = e.target.closest('a')
     if (!a) return
@@ -920,7 +963,7 @@ function renderTree() {
     h.push(tn({ loc: { t: 'archive' }, label: 'Archivo (cerradas)', icon: '📦', count: archived }))
   }
 
-  $('#tree').innerHTML = h.join('')
+  setHtml($('#tree'), h.join(''))
 }
 
 // Panel y carpetas que contienen la ubicación actual: se despliegan solos
@@ -1005,7 +1048,7 @@ function renderDetails() {
     ['recent', 'Último uso'],
     ['', 'Estado'],
   ]
-  $('#colhead').innerHTML = cols.map(([k, l]) => `<div data-sort="${k}">${l}${k && k === sortCol ? ' ▾' : ''}</div>`).join('')
+  setHtml($('#colhead'), cols.map(([k, l]) => `<div data-sort="${k}">${l}${k && k === sortCol ? ' ▾' : ''}</div>`).join(''))
   const list = listEl()
   const rowH = list.querySelector('.r')?.offsetHeight || parseInt(getComputedStyle(document.documentElement).getPropertyValue('--row')) || 28
   S.rowH = rowH
@@ -1016,9 +1059,9 @@ function renderDetails() {
   const win = $('#win')
   win.style.transform = `translateY(${start * rowH}px)`
   const tm = treeMode()
-  let html = ''
-  for (let i = start; i < end; i++) html += rowHtml(S.rows[i], i, tm)
-  win.innerHTML = html
+  const parts = []
+  for (let i = start; i < end; i++) parts.push([S.rows[i].it.key, rowHtml(S.rows[i], i, tm)])
+  placeEls(win, parts, keyedEls(win.children))
 }
 
 // Circulito: relleno = cargada, vacío = dormida, discontinuo = cerrada (ficha)
@@ -1107,18 +1150,21 @@ function renderIcons() {
   const top = list.scrollTop
   const r0 = Math.max(0, Math.floor(top / g.cardH) - 2)
   const r1 = Math.min(nRows, Math.ceil((top + list.clientHeight) / g.cardH) + 2)
-  $('#win').style.transform = `translateY(${r0 * g.cardH}px)`
-  let html = ''
+  const win = $('#win')
+  win.style.transform = `translateY(${r0 * g.cardH}px)`
+  const old = keyedEls(win.querySelectorAll(':scope > .grow-row > [data-key]'))
+  ;[...win.children].forEach(el => el.classList.contains('grow-row') || el.remove())
+  while (win.children.length > Math.max(0, r1 - r0)) win.lastElementChild.remove()
+  while (win.children.length < r1 - r0) win.appendChild(document.createElement('div')).className = 'grow-row'
   for (let r = r0; r < r1; r++) {
-    html += '<div class="grow-row">'
+    const parts = []
     for (let c = 0; c < g.cols; c++) {
       const i = r * g.cols + c
       if (i >= S.rows.length) break
-      html += cardHtml(S.rows[i].it, i)
+      parts.push([S.rows[i].it.key, cardHtml(S.rows[i].it, i)])
     }
-    html += '</div>'
+    placeEls(win.children[r - r0], parts, old)
   }
-  $('#win').innerHTML = html
 }
 
 // Carpeta grande (con color e icono encima) para la vista de miniaturas
@@ -1216,7 +1262,7 @@ function renderStatus() {
   if (imp) parts.push(`<span title="Datos importados de Sidebery">Sidebery: ${imp.panels.length} paneles · importado ${ago(imp.importedAt || imp.time)}</span>`)
   if (S.ytBlocked) parts.push(`<span class="warn" data-act="ytperm" title="Para mostrar el canal de los vídeos">Ver canales de YouTube: permitir</span>`)
   if (unsure && S.panelOrder.length) parts.push(`<span class="warn" data-act="setup" title="Pestañas cuyo panel se deduce por posición">${unsure} sin confirmar</span>`)
-  $('#status').innerHTML = parts.join('')
+  setHtml($('#status'), parts.join(''))
 }
 
 // ---------------------------------------------------------------------------
@@ -1237,22 +1283,22 @@ function renderInspector() {
   }
   el.dataset.key = items.length === 1 ? items[0].key : ''
   if (!items.length) {
-    el.innerHTML = inspectorLocation()
+    setHtml(el, inspectorLocation())
     return
   }
   if (items.length > 1) {
-    el.innerHTML = inspectorMulti(items)
+    setHtml(el, inspectorMulti(items))
     return
   }
   const it = items[0]
   if (it.kind === 'panel' || it.kind === 'pinnedf') {
     const loc0 = S.loc
     S.loc = it.kind === 'panel' ? { t: 'panel', w: it.win, p: it.panel } : { t: 'pinned', w: it.win }
-    el.innerHTML = inspectorLocation()
+    setHtml(el, inspectorLocation())
     S.loc = loc0
-  } else if (it.kind === 'col') el.innerHTML = inspectorCol(it)
-  else if (it.kind === 'tagdir') el.innerHTML = inspectorTag(it)
-  else el.innerHTML = inspectorItem(it)
+  } else if (it.kind === 'col') setHtml(el, inspectorCol(it))
+  else if (it.kind === 'tagdir') setHtml(el, inspectorTag(it))
+  else setHtml(el, inspectorItem(it))
 }
 
 function inspectorLocation() {
@@ -2366,6 +2412,7 @@ $('#inspector').addEventListener('keydown', async e => {
     await editFichas(a === 'tag' ? [it] : selectedItems(), f => {
       if (!f.tags.includes(t)) f.tags.push(t)
     })
+    e.target.value = ''
     $('#inspector [data-act="' + a + '"]')?.focus()
   } else if (a === 'link') {
     e.preventDefault()
@@ -2375,6 +2422,7 @@ $('#inspector').addEventListener('keydown', async e => {
     await editFichas([it], f => {
       if (!f.links.includes(target.nurl)) f.links.push(target.nurl)
     })
+    e.target.value = ''
     // El vínculo es mutuo: la otra también lo guarda
     const other = itemForUrl(target.nurl)
     if (other) await editFichas([other], f => {
