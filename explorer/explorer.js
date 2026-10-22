@@ -11,6 +11,7 @@ const DEFAULTS = {
   thumbs: false,
   openMode: 'tab',
   theme: 'auto',
+  intoPos: 'first',
   accent: '',
   fontSize: 13,
   radius: 6,
@@ -1601,7 +1602,7 @@ async function moveTabs(ids, target, opts = {}) {
     return false
   }
   const before = winState(win)
-  const t = target.end ? { panelEnd: target.panel } : target.into !== undefined ? { into: target.into } : target.after !== undefined ? { after: target.after } : { before: target.before }
+  const t = target.end ? { panelEnd: target.panel } : target.into !== undefined ? { into: target.into, first: !!target.first } : target.after !== undefined ? { after: target.after } : { before: target.before }
   toast('Calculando un movimiento seguro…', 4000)
   await new Promise(r => setTimeout(r, 20))
   const plan = M.planMoveOp(before, ids, t)
@@ -1766,8 +1767,11 @@ function locTarget(loc) {
   return null
 }
 
+// ¿Primera o última dentro de una carpeta? Según el ajuste; con Alt, lo contrario.
+const intoFirst = alt => (S.settings.intoPos !== 'last') !== !!alt
+
 // Soltar elementos en un destino
-async function dropItems(items, target, copy) {
+async function dropItems(items, target, copy, alt = false) {
   if (!target) return
   const tabs = items.filter(i => i.kind === 'tab')
   const data = items.filter(i => i.kind === 'tab' || i.kind === 'ficha')
@@ -1782,7 +1786,7 @@ async function dropItems(items, target, copy) {
     case 'after': {
       const ref = target.id
       if (tabs.length) {
-        const t = target.kind === 'into' ? { into: ref } : target.kind === 'before' ? { before: ref } : { after: ref }
+        const t = target.kind === 'into' ? { into: ref, first: intoFirst(alt) } : target.kind === 'before' ? { before: ref } : { after: ref }
         await moveTabs(tabs.map(t => t.id), t)
       }
       const closed = items.filter(i => i.kind === 'ficha')
@@ -2679,7 +2683,7 @@ document.addEventListener('drop', async e => {
   e.preventDefault()
   const items = dragKeys.map(k => S.items.get(k)).filter(Boolean)
   dragKeys = null
-  await dropItems(items, d.target, e.ctrlKey)
+  await dropItems(items, d.target, e.ctrlKey, e.altKey)
 })
 
 // ---------------------------------------------------------------------------
@@ -2740,6 +2744,7 @@ async function openSettings(section) {
 <div class="row"><label>Tamaño del texto</label><input type="range" id="setFont" min="11" max="18" step="1" value="${s.fontSize}"> <span id="fontVal">${s.fontSize}px</span></div>
 <div class="row"><label>Densidad de las filas</label><select id="setDensity"><option value="compact">Compacta</option><option value="normal">Normal</option><option value="comfy">Amplia</option></select></div>
 <div class="row"><label>Redondeo de esquinas</label><input type="range" id="setRadius" min="0" max="14" step="1" value="${s.radius}"></div>
+<div class="row"><label>Al meter pestañas en una carpeta</label><select id="setInto"><option value="first">Ponerlas las primeras</option><option value="last">Ponerlas las últimas</option></select> <span class="small muted">(con Alt al soltar, lo contrario)</span></div>
 <div class="row"><label>Al abrir, empezar en</label><select id="setView"><option value="details">Detalles</option><option value="icons">Miniaturas</option><option value="graph">Grafo</option></select></div>
 <div class="row"><label>Al pulsar el icono, abrir en</label><select id="setOpen"><option value="tab">Una pestaña</option><option value="window">Una ventana aparte</option></select> <span class="small muted">(clic central en el icono: siempre en ventana)</span></div>
 
@@ -2763,6 +2768,8 @@ Al arrastrar a una colección, <code>Ctrl</code> copia en vez de mover entre col
   dlg.querySelector('#setTheme').value = s.theme
   dlg.querySelector('#setDensity').value = s.density
   dlg.querySelector('#setView').value = s.view
+  dlg.querySelector('#setInto').value = s.intoPos
+  dlg.querySelector('#setInto').onchange = e => saveSettings({ intoPos: e.target.value })
   dlg.querySelector('#setView').onchange = e => setView(e.target.value)
   dlg.querySelector('#setAccent').oninput = e => saveSettings({ accent: e.target.value })
   dlg.querySelector('#btnAccentReset').onclick = e => {

@@ -404,3 +404,10 @@ test('instantáneas comprimidas de Sidebery: se reconstruyen todas las pestañas
   assert.equal(r.windows[0].find(t => t.url === 'https://a.com/5').color, 'red')
   assert.equal(r.snapshots.length, 4)
 })
+
+test('dentro de una carpeta: primera o última', () => {
+  const s = st('A:0:1 A:1:2 A:1:3 A:0:10 A:1:11 A:0:20 A:0:30')
+  assert.equal(show(runPlan(s, [10, 20], { into: 1, first: true }).list), 'A1 A10<1 A11<10 A20<1 A2<1 A3<1 A30')
+  assert.equal(show(runPlan(s, [10, 20], { into: 1 }).list), 'A1 A2<1 A3<1 A10<1 A11<10 A20<1 A30')
+  assert.equal(show(runPlan(s, [30], { into: 1, first: true }).list), 'A1 A30<1 A2<1 A3<1 A10 A11<10 A20')
+})
