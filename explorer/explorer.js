@@ -780,9 +780,23 @@ function render() {
   renderStatus()
 }
 
+// Mientras se mantiene pulsado el botón sobre la lista no se repinta: si el
+// elemento pulsado se sustituye, Firefox ya no puede empezar a arrastrarlo
+let holdRender = false
+let heldRender = false
+
+function releaseRender() {
+  holdRender = false
+  if (heldRender) {
+    heldRender = false
+    renderSoon()
+  }
+}
+
 const renderSoon = (() => {
   let raf = 0
   return () => {
+    if (holdRender) return void (heldRender = true)
     if (raf) return
     raf = requestAnimationFrame(() => {
       raf = 0
@@ -2159,8 +2173,18 @@ listEl().addEventListener('mousedown', e => {
     S.pendingSingle = key
     return
   }
+  // Seleccionar al pulsar, como un gestor de archivos, sin perder la fila
+  // pulsada para que se pueda arrastrar sin soltar
+  holdRender = true
   clickSelect(key, e)
+  listEl().querySelectorAll('[data-key]').forEach(el => {
+    el.classList.toggle('sel', S.sel.has(el.dataset.key))
+    el.classList.toggle('foc', S.focus === el.dataset.key)
+  })
 })
+
+document.addEventListener('mouseup', releaseRender, true)
+window.addEventListener('blur', releaseRender)
 
 listEl().addEventListener('click', e => {
   if (S.pendingSingle && listClickKey(e) === S.pendingSingle && !e.ctrlKey && !e.shiftKey) selectOnly(S.pendingSingle)
@@ -2598,6 +2622,7 @@ document.addEventListener('dragstart', e => {
 document.addEventListener('dragend', () => {
   dragKeys = null
   clearDrop()
+  releaseRender()
 })
 
 // Qué pasaría al soltar aquí
