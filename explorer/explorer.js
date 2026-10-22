@@ -2725,8 +2725,7 @@ async function openSettings(section) {
   } catch {}
   const thumbsPerm = await browser.permissions.contains({ origins: ['<all_urls>'] })
   const dlg = $('#dlg')
-  dlg.innerHTML = `<h3>Ajustes <span class="small muted">v${esc(browser.runtime.getManifest().version)}</span></h3>
-<div class="row"><label><input type="checkbox" id="setInto" ${s.intoPos !== 'last' ? 'checked' : ''}> Al soltar pestañas en una carpeta, ponerlas las primeras</label> <span class="small muted">(desmarcado: las últimas; con Alt al soltar, lo contrario)</span></div>
+  dlg.innerHTML = `<h3>Ajustes</h3>
 <h4 id="sec-sidebery">Conexión con Sidebery</h4>
 <p class="small">Sidebery no tiene una vía para que otras extensiones lean sus datos, y aquí no se modifica. Pestañario los obtiene de tres fuentes que Sidebery ya ofrece:</p>
 <ol class="small">
@@ -2745,6 +2744,7 @@ async function openSettings(section) {
 <div class="row"><label>Tamaño del texto</label><input type="range" id="setFont" min="11" max="18" step="1" value="${s.fontSize}"> <span id="fontVal">${s.fontSize}px</span></div>
 <div class="row"><label>Densidad de las filas</label><select id="setDensity"><option value="compact">Compacta</option><option value="normal">Normal</option><option value="comfy">Amplia</option></select></div>
 <div class="row"><label>Redondeo de esquinas</label><input type="range" id="setRadius" min="0" max="14" step="1" value="${s.radius}"></div>
+<div class="row"><label>Al meter pestañas en una carpeta</label><select id="setInto"><option value="first">Ponerlas las primeras</option><option value="last">Ponerlas las últimas</option></select> <span class="small muted">(con Alt al soltar, lo contrario)</span></div>
 <div class="row"><label>Al abrir, empezar en</label><select id="setView"><option value="details">Detalles</option><option value="icons">Miniaturas</option><option value="graph">Grafo</option></select></div>
 <div class="row"><label>Al pulsar el icono, abrir en</label><select id="setOpen"><option value="tab">Una pestaña</option><option value="window">Una ventana aparte</option></select> <span class="small muted">(clic central en el icono: siempre en ventana)</span></div>
 
@@ -2768,7 +2768,8 @@ Al arrastrar a una colección, <code>Ctrl</code> copia en vez de mover entre col
   dlg.querySelector('#setTheme').value = s.theme
   dlg.querySelector('#setDensity').value = s.density
   dlg.querySelector('#setView').value = s.view
-  dlg.querySelector('#setInto').onchange = e => saveSettings({ intoPos: e.target.checked ? 'first' : 'last' })
+  dlg.querySelector('#setInto').value = s.intoPos
+  dlg.querySelector('#setInto').onchange = e => saveSettings({ intoPos: e.target.value })
   dlg.querySelector('#setView').onchange = e => setView(e.target.value)
   dlg.querySelector('#setAccent').oninput = e => saveSettings({ accent: e.target.value })
   dlg.querySelector('#btnAccentReset').onclick = e => {
